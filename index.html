@@ -87,7 +87,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <div id="inbox" class="m">Nothing yet.</div>
   <button class="g" id="bDisc">Disconnect</button>
 </section>
-<p class="m">Tip: keep both screens on during transfers. Very large files (&gt;1 GB) may fail on iPhone due to memory limits.</p>
+<p class="m"><b>For top speed:</b> put both phones on the same 5 GHz Wi-Fi, or turn on one phone's hotspot and join it from the other (works with no internet). Keep both screens on. Files over ~1 GB may fail on iPhone due to memory limits.</p>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
@@ -95,7 +95,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-const CHUNK=16384,HIGH=4*1024*1024;
+const CHUNK=65536,BLOCK=1024*1024,HIGH=8*1024*1024;
 let pc,dc,cam,rx=null;
 
 const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
@@ -203,10 +203,11 @@ $('#scanX').onclick=()=>{stopCam();view(pc&&pc.localDescription&&pc.localDescrip
 
 // ---- file transfer ----
 function wire(ch){
-  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=1024*1024;
+  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=2*1024*1024;
   dc.onmessage=onMsg;
   dc.onclose=()=>status('disconnected');
 }
+function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
 function onMsg(e){
   if(typeof e.data==='string'){
@@ -216,14 +217,16 @@ function onMsg(e){
       row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';
       row.firstChild.textContent='⬇ '+m.name+' ('+fmt(m.size)+')';
       if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
-      $('#inbox').prepend(row);rx={m,parts:[],got:0,row};
+      $('#inbox').prepend(row);rx={m,parts:[],got:0,row,t0:performance.now(),lu:0,label:'⬇ '+m.name+' ('+fmt(m.size)+')'};
     }else if(m.t==='end'&&rx){
       const blob=new Blob(rx.parts,{type:rx.m.type||'application/octet-stream'});
       const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=rx.m.name;a.className='btn';a.textContent='Save '+rx.m.name;
       rx.row.querySelector('progress').replaceWith(a);rx=null;
     }
   }else if(rx){
-    rx.parts.push(e.data);rx.got+=e.data.byteLength;rx.row.querySelector('progress').value=rx.got;
+    rx.parts.push(e.data);rx.got+=e.data.byteLength;
+    const n=performance.now();
+    if(n-rx.lu>250){rx.lu=n;rx.row.querySelector('progress').value=rx.got;rx.row.firstChild.textContent=rx.label+' · '+speed(rx.got,n-rx.t0);}
   }
 }
 $('#bPick').onclick=()=>$('#pick').click();
@@ -231,15 +234,22 @@ $('#pick').onchange=async e=>{for(const f of e.target.files)await send(f);e.targ
 async function send(f){
   const row=document.createElement('div');row.className='row';
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
-  row.firstChild.textContent='⬆ '+f.name+' ('+fmt(f.size)+')';$('#out').prepend(row);
+  const label='⬆ '+f.name+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
   dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type}));
-  for(let o=0;o<f.size;o+=CHUNK){
-    if(dc.readyState!=='open'){row.firstChild.textContent+=' — failed';return;}
-    if(dc.bufferedAmount>HIGH)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r();};});
-    dc.send(await f.slice(o,o+CHUNK).arrayBuffer());
-    row.querySelector('progress').value=o+CHUNK;
+  const t0=performance.now();
+  for(let o=0;o<f.size;o+=BLOCK){
+    const buf=await f.slice(o,o+BLOCK).arrayBuffer();
+    for(let i=0;i<buf.byteLength;i+=CHUNK){
+      if(dc.readyState!=='open'){row.firstChild.textContent=label+' — failed';return;}
+      if(dc.bufferedAmount>HIGH)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r();};});
+      dc.send(new Uint8Array(buf,i,Math.min(CHUNK,buf.byteLength-i)));
+    }
+    const done=Math.min(o+BLOCK,f.size);
+    row.querySelector('progress').value=done;
+    row.firstChild.textContent=label+' · '+speed(done,performance.now()-t0);
   }
-  dc.send(JSON.stringify({t:'end'}));row.firstChild.textContent+=' ✓';
+  dc.send(JSON.stringify({t:'end'}));
+  row.firstChild.textContent=label+' ✓ '+speed(f.size,performance.now()-t0);
 }
 $('#bDisc').onclick=()=>{endPc();status('not connected');view('home');};
 document.addEventListener('click',e=>{
