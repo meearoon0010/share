@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2563eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>AirDrop-less · iOS ↔ Android file transfer</title>
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--tx:#14161a;--mu:#6b7280;--ac:#2563eb;--bd:#e3e6ea;--ok:#16a34a}
@@ -85,6 +91,8 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <div id="out"></div>
   <b style="display:block;margin-top:16px">Received</b>
   <div id="inbox" class="m">Nothing yet.</div>
+  <label class="m" style="display:block;margin-top:12px"><input type="checkbox" id="bg" checked> Keep running when minimized (plays inaudible audio)</label>
+  <div id="warn" class="m" hidden style="color:#dc2626"></div>
   <button class="g" id="bDisc">Disconnect</button>
 </section>
 <p class="m"><b>For top speed:</b> put both phones on the same 5 GHz Wi-Fi, or turn on one phone's hotspot and join it from the other (works with no internet). Keep both screens on. Files over ~1 GB may fail on iPhone due to memory limits.</p>
@@ -99,7 +107,8 @@ const CHUNK=65536,BLOCK=1024*1024,HIGH=8*1024*1024;
 let pc,dc,cam,rx=null;
 
 const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
-const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s)};
+const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s);
+  keepAlive(ids.includes('xfer')&&$('#bg').checked);};
 const status=t=>{$('#st').textContent=t;$('#st').className='pill'+(t==='connected'?' ok':'')};
 
 // ---- encode/decode signalling (compressed + base64url) ----
@@ -283,6 +292,34 @@ $('#cGo').onclick=()=>{
     setTimeout(()=>{if($('#st').textContent==='connecting…')status('not connected');},15000);});
   peer.on('error',e=>{status('not connected');alert(e.type==='peer-unavailable'?'Code not found. Check it and try again.':'Could not connect ('+e.type+').');});
 };
+// ---- background keep-alive (best effort: wake lock + inaudible looping audio) ----
+let wl=null,aud=null;
+function silentWav(){const n=8000,b=new ArrayBuffer(44+n*2),v=new DataView(b);
+  const w=(o,t)=>[...t].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+  w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,8000,true);v.setUint32(28,16000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++)v.setInt16(44+i*2,i%2?2:-2,true);
+  return URL.createObjectURL(new Blob([b],{type:'audio/wav'}));}
+function prime(){if(aud)return;try{aud=new Audio(silentWav());aud.loop=true;aud.setAttribute('playsinline','');aud.play().then(()=>aud.pause()).catch(()=>{});}catch(e){}}
+document.addEventListener('click',prime,{capture:true});
+async function keepAlive(on){
+  try{
+    if(on){
+      if('wakeLock' in navigator&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>{wl=null;});}
+      prime();if(aud)await aud.play();
+      if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:'Direct Transfer',artist:'Transfer in progress'});
+    }else{if(wl){wl.release();wl=null;}if(aud)aud.pause();}
+  }catch(e){}
+}
+$('#bg').onchange=e=>keepAlive(e.target.checked);
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible'||$('#xfer').hidden)return;
+  if($('#bg').checked)keepAlive(true);
+  const w=$('#warn');
+  if(dc&&dc.readyState!=='open'){w.hidden=false;w.textContent='Connection dropped while the app was in the background. Tap Disconnect and reconnect.';}
+  else w.hidden=true;
+});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 view('home');
 </script>
 </body>
