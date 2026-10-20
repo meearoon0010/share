@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AirDrop-less · iOS ↔ Android file transfer</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--tx:#14161a;--mu:#6b7280;--ac:#2563eb;--bd:#e3e6ea;--ok:#16a34a}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#1a1d23;--tx:#eef0f3;--mu:#9aa3af;--ac:#5b8cff;--bd:#2a2f38;--ok:#4ade80}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.45 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom))}
+main{max-width:520px;margin:0 auto}h1{font-size:22px;margin:8px 0 2px}p.s{color:var(--mu);margin:0 0 16px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+button,.btn{font:inherit;font-weight:600;background:var(--ac);color:#fff;border:0;border-radius:10px;padding:12px 16px;width:100%;margin-top:8px;cursor:pointer;display:block;text-align:center;text-decoration:none}
+button.g{background:transparent;color:var(--ac);border:1px solid var(--bd)}
+textarea{width:100%;height:70px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);padding:8px;font:12px monospace;margin-top:8px}
+#qr img{width:100%;max-width:300px;display:block;margin:8px auto;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px}
+video{width:100%;border-radius:10px;background:#000}
+.pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:13px;background:var(--bg);border:1px solid var(--bd)}
+.ok{color:var(--ok)}.row{padding:10px 0;border-top:1px solid var(--bd)}.row:first-child{border-top:0}
+progress{width:100%;height:8px}.m{color:var(--mu);font-size:13px}[hidden]{display:none!important}
+ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<h1>📲 Direct Transfer</h1>
+<p class="s">iPhone ↔ Android, peer-to-peer. Files never touch a server.</p>
+<div style="margin-bottom:12px">Status: <span class="pill" id="st">not connected</span></div>
+
+<section id="home" class="card">
+  <b>Connect two devices</b>
+  <ol><li>Open this page on both devices (same Wi-Fi works best).</li><li>One taps <i>Start</i>, the other taps <i>Join</i>.</li><li>Scan each other's QR code, once each way.</li></ol>
+  <button id="bStart">Start (show my QR first)</button>
+  <button class="g" id="bJoin">Join (scan the other device)</button>
+</section>
+
+<section id="host" class="card" hidden>
+  <b>Step 1 · Let the other device scan this</b>
+  <div id="qr"></div><div class="m" id="qrmsg"></div>
+  <textarea id="hOffer" readonly></textarea>
+  <button class="g" data-copy="hOffer">Copy code</button>
+  <b style="display:block;margin-top:14px">Step 2 · Scan its reply</b>
+  <button id="hScan">Scan reply QR</button>
+  <textarea id="hAns" placeholder="…or paste reply code here"></textarea>
+  <button class="g" id="hApply">Connect with pasted code</button>
+</section>
+
+<section id="join" class="card" hidden>
+  <b>Step 1 · Scan the first device's QR</b>
+  <button id="jScan">Scan QR</button>
+  <textarea id="jOffer" placeholder="…or paste its code here"></textarea>
+  <button class="g" id="jApply">Use pasted code</button>
+  <div id="jOut" hidden>
+    <b style="display:block;margin-top:14px">Step 2 · Show this to the first device</b>
+    <div id="qr2"></div><div class="m" id="qrmsg2"></div>
+    <textarea id="jAns" readonly></textarea>
+    <button class="g" data-copy="jAns">Copy reply code</button>
+  </div>
+</section>
+
+<section id="scanbox" class="card" hidden>
+  <video id="vid" playsinline muted></video>
+  <button class="g" id="scanX">Cancel</button>
+</section>
+
+<section id="xfer" class="card" hidden>
+  <b>Send files</b>
+  <input type="file" id="pick" multiple hidden>
+  <button id="bPick">Choose files to send</button>
+  <div id="out"></div>
+  <b style="display:block;margin-top:16px">Received</b>
+  <div id="inbox" class="m">Nothing yet.</div>
+  <button class="g" id="bDisc">Disconnect</button>
+</section>
+<p class="m">Tip: keep both screens on during transfers. Very large files (&gt;1 GB) may fail on iPhone due to memory limits.</p>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+const CHUNK=16384,HIGH=4*1024*1024;
+let pc,dc,cam,rx=null;
+
+const show=id=>{for(const s of ['home','host','join','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
+const view=(...ids)=>{for(const s of ['home','host','join','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s)};
+const status=t=>{$('#st').textContent=t;$('#st').className='pill'+(t==='connected'?' ok':'')};
+
+// ---- encode/decode signalling (compressed + base64url) ----
+async function pack(o){
+  let b=new TextEncoder().encode(JSON.stringify(o)),p='r';
+  if(window.CompressionStream){
+    b=new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());p='z';
+  }
+  let s='';b.forEach(x=>s+=String.fromCharCode(x));
+  return p+btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+async function unpack(str){
+  str=str.trim();const p=str[0];
+  let b=Uint8Array.from(atob(str.slice(1).replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+  if(p==='z')b=new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(b));
+}
+function drawQR(el,msg,code){
+  try{const q=qrcode(0,'L');q.addData(code);q.make();el.innerHTML='<img src="'+q.createDataURL(4,4)+'" alt="QR">';msg.textContent='';}
+  catch(e){el.innerHTML='';msg.textContent='Code too long for a QR here — use Copy code and paste it on the other device.';}
+}
+
+// ---- WebRTC ----
+function mk(){
+  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+  pc.onconnectionstatechange=()=>{
+    const s=pc.connectionState;status(s==='connected'?'connected':s);
+    if(s==='connected')view('xfer');
+    if(['failed','disconnected','closed'].includes(s)&&s!=='connected')status(s);
+  };
+  pc.ondatachannel=e=>wire(e.channel);
+}
+const gathered=()=>new Promise(r=>{
+  if(pc.iceGatheringState==='complete')return r();
+  pc.onicegatheringstatechange=()=>pc.iceGatheringState==='complete'&&r();
+  setTimeout(r,4000);
+});
+
+$('#bStart').onclick=async()=>{
+  mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
+  await pc.setLocalDescription(await pc.createOffer());await gathered();
+  const c=await pack(pc.localDescription.toJSON());
+  $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);status('waiting for reply');
+};
+$('#hScan').onclick=()=>scan(c=>applyAnswer(c));
+$('#hApply').onclick=()=>applyAnswer($('#hAns').value);
+async function applyAnswer(c){try{await pc.setRemoteDescription(await unpack(c));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
+
+$('#bJoin').onclick=()=>{mk();view('join');};
+$('#jScan').onclick=()=>scan(c=>makeAnswer(c));
+$('#jApply').onclick=()=>makeAnswer($('#jOffer').value);
+async function makeAnswer(c){
+  view('join');
+  try{
+    await pc.setRemoteDescription(await unpack(c));
+    await pc.setLocalDescription(await pc.createAnswer());status('creating reply…');await gathered();
+    const a=await pack(pc.localDescription.toJSON());
+    $('#jOut').hidden=false;$('#jAns').value=a;drawQR($('#qr2'),$('#qrmsg2'),a);status('show reply to other device');
+  }catch(e){alert('Invalid code. Try again.');}
+}
+
+// ---- camera scanner ----
+async function scan(cb){
+  try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});}
+  catch(e){alert('Camera unavailable. Paste the code instead.');return;}
+  const v=$('#vid');v.srcObject=cam;await v.play();view('scanbox');
+  const c=document.createElement('canvas'),x=c.getContext('2d',{willReadFrequently:true});
+  const tick=()=>{
+    if(!cam)return;
+    if(v.videoWidth){c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0);
+      const r=jsQR(x.getImageData(0,0,c.width,c.height).data,c.width,c.height);
+      if(r&&r.data){stopCam();cb(r.data);return;}}
+    requestAnimationFrame(tick);
+  };
+  tick();
+}
+function stopCam(){if(cam){cam.getTracks().forEach(t=>t.stop());cam=null;}}
+$('#scanX').onclick=()=>{stopCam();view(pc&&pc.localDescription&&pc.localDescription.type==='offer'?'host':'join');};
+
+// ---- file transfer ----
+function wire(ch){
+  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=1024*1024;
+  dc.onmessage=onMsg;
+  dc.onclose=()=>status('disconnected');
+}
+function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
+function onMsg(e){
+  if(typeof e.data==='string'){
+    const m=JSON.parse(e.data);
+    if(m.t==='meta'){
+      const row=document.createElement('div');row.className='row';
+      row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';
+      row.firstChild.textContent='⬇ '+m.name+' ('+fmt(m.size)+')';
+      if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
+      $('#inbox').prepend(row);rx={m,parts:[],got:0,row};
+    }else if(m.t==='end'&&rx){
+      const blob=new Blob(rx.parts,{type:rx.m.type||'application/octet-stream'});
+      const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=rx.m.name;a.className='btn';a.textContent='Save '+rx.m.name;
+      rx.row.querySelector('progress').replaceWith(a);rx=null;
+    }
+  }else if(rx){
+    rx.parts.push(e.data);rx.got+=e.data.byteLength;rx.row.querySelector('progress').value=rx.got;
+  }
+}
+$('#bPick').onclick=()=>$('#pick').click();
+$('#pick').onchange=async e=>{for(const f of e.target.files)await send(f);e.target.value='';};
+async function send(f){
+  const row=document.createElement('div');row.className='row';
+  row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
+  row.firstChild.textContent='⬆ '+f.name+' ('+fmt(f.size)+')';$('#out').prepend(row);
+  dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type}));
+  for(let o=0;o<f.size;o+=CHUNK){
+    if(dc.readyState!=='open'){row.firstChild.textContent+=' — failed';return;}
+    if(dc.bufferedAmount>HIGH)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r();};});
+    dc.send(await f.slice(o,o+CHUNK).arrayBuffer());
+    row.querySelector('progress').value=o+CHUNK;
+  }
+  dc.send(JSON.stringify({t:'end'}));row.firstChild.textContent+=' ✓';
+}
+$('#bDisc').onclick=()=>{if(pc)pc.close();stopCam();status('not connected');view('home');};
+document.addEventListener('click',e=>{
+  const id=e.target.dataset&&e.target.dataset.copy;
+  if(id){const t=$('#'+id);t.select();navigator.clipboard?.writeText(t.value);e.target.textContent='Copied ✓';}
+});
+view('home');
+</script>
+</body>
+</html>
