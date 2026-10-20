@@ -13,7 +13,7 @@ main{max-width:520px;margin:0 auto}h1{font-size:22px;margin:8px 0 2px}p.s{color:
 button,.btn{font:inherit;font-weight:600;background:var(--ac);color:#fff;border:0;border-radius:10px;padding:12px 16px;width:100%;margin-top:8px;cursor:pointer;display:block;text-align:center;text-decoration:none}
 button.g{background:transparent;color:var(--ac);border:1px solid var(--bd)}
 textarea{width:100%;height:70px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);padding:8px;font:12px monospace;margin-top:8px}
-#qr img{width:100%;max-width:300px;display:block;margin:8px auto;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px}
+#qr img{width:100%;max-width:420px;display:block;margin:8px auto;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px}
 video{width:100%;border-radius:10px;background:#000}
 .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:13px;background:var(--bg);border:1px solid var(--bd)}
 .ok{color:var(--ok)}.row{padding:10px 0;border-top:1px solid var(--bd)}.row:first-child{border-top:0}
@@ -32,6 +32,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <ol><li>Open this page on both devices (same Wi-Fi works best).</li><li>One taps <i>Start</i>, the other taps <i>Join</i>.</li><li>Scan each other's QR code, once each way.</li></ol>
   <button id="bStart">Start (show my QR first)</button>
   <button class="g" id="bJoin">Join (scan the other device)</button>
+  <button class="g toCode">QR not working? Use a short code</button>
 </section>
 
 <section id="host" class="card" hidden>
@@ -43,6 +44,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <button id="hScan">Scan reply QR</button>
   <textarea id="hAns" placeholder="…or paste reply code here"></textarea>
   <button class="g" id="hApply">Connect with pasted code</button>
+  <button class="g toCode">QR not working? Use a short code</button>
 </section>
 
 <section id="join" class="card" hidden>
@@ -50,6 +52,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <button id="jScan">Scan QR</button>
   <textarea id="jOffer" placeholder="…or paste its code here"></textarea>
   <button class="g" id="jApply">Use pasted code</button>
+  <button class="g toCode">QR not working? Use a short code</button>
   <div id="jOut" hidden>
     <b style="display:block;margin-top:14px">Step 2 · Show this to the first device</b>
     <div id="qr2"></div><div class="m" id="qrmsg2"></div>
@@ -58,9 +61,21 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   </div>
 </section>
 
+<section id="code" class="card" hidden>
+  <b>Connect with a short code</b>
+  <p class="m" style="margin:4px 0 0">Both devices need internet for this step. Files still go directly between the phones.</p>
+  <button id="cShow">Show a code on this device</button>
+  <div id="cShowBox" hidden style="text-align:center"><div id="myCode" style="font:700 40px/1.3 monospace;letter-spacing:4px">…</div><div class="m">Type this code on the other device</div></div>
+  <b style="display:block;margin-top:14px">Or enter the code shown on the other device</b>
+  <textarea id="cIn" style="height:auto;font:700 24px monospace;text-align:center;letter-spacing:4px" rows="1" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC 123"></textarea>
+  <button id="cGo">Connect</button>
+  <button class="g" id="cBack">Back</button>
+</section>
+
 <section id="scanbox" class="card" hidden>
   <video id="vid" playsinline muted></video>
   <button class="g" id="scanX">Cancel</button>
+  <button class="g toCode">QR not working? Use a short code</button>
 </section>
 
 <section id="xfer" class="card" hidden>
@@ -76,14 +91,15 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 const CHUNK=16384,HIGH=4*1024*1024;
 let pc,dc,cam,rx=null;
 
-const show=id=>{for(const s of ['home','host','join','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
-const view=(...ids)=>{for(const s of ['home','host','join','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s)};
+const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
+const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s)};
 const status=t=>{$('#st').textContent=t;$('#st').className='pill'+(t==='connected'?' ok':'')};
 
 // ---- encode/decode signalling (compressed + base64url) ----
@@ -100,6 +116,22 @@ async function unpack(str){
   let b=Uint8Array.from(atob(str.slice(1).replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
   if(p==='z')b=new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   return JSON.parse(new TextDecoder().decode(b));
+}
+
+// ---- compact SDP: send only what a data-channel connection needs (keeps QR small & scannable) ----
+function compact(d){
+  const g=r=>(d.sdp.match(r)||[])[1]||'';
+  const c=[...d.sdp.matchAll(/^a=candidate:(.*)$/gm)].map(m=>m[1].trim())
+    .filter(x=>!/ tcp /i.test(x)&&!/ [0-9a-f]*:[0-9a-f:]+ \d+ typ/i.test(x));
+  return {y:d.type,u:g(/a=ice-ufrag:(.*)/),p:g(/a=ice-pwd:(.*)/),f:g(/a=fingerprint:sha-256 (.*)/).trim(),c};
+}
+function expand(o){
+  const L=['v=0','o=- 1 2 IN IP4 127.0.0.1','s=-','t=0 0','a=group:BUNDLE 0',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel','c=IN IP4 0.0.0.0',
+    'a=ice-ufrag:'+o.u,'a=ice-pwd:'+o.p,'a=fingerprint:sha-256 '+o.f,
+    'a=setup:'+(o.y==='offer'?'actpass':'active'),'a=mid:0','a=sctp-port:5000','a=max-message-size:262144',
+    ...o.c.map(x=>'a=candidate:'+x),'a=end-of-candidates'];
+  return {type:o.y,sdp:L.join('\r\n')+'\r\n'};
 }
 function drawQR(el,msg,code){
   try{const q=qrcode(0,'L');q.addData(code);q.make();el.innerHTML='<img src="'+q.createDataURL(4,4)+'" alt="QR">';msg.textContent='';}
@@ -125,12 +157,12 @@ const gathered=()=>new Promise(r=>{
 $('#bStart').onclick=async()=>{
   mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
   await pc.setLocalDescription(await pc.createOffer());await gathered();
-  const c=await pack(pc.localDescription.toJSON());
+  const c=await pack(compact(pc.localDescription));
   $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);status('waiting for reply');
 };
 $('#hScan').onclick=()=>scan(c=>applyAnswer(c));
 $('#hApply').onclick=()=>applyAnswer($('#hAns').value);
-async function applyAnswer(c){try{await pc.setRemoteDescription(await unpack(c));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
+async function applyAnswer(c){try{await pc.setRemoteDescription(expand(await unpack(c)));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
 
 $('#bJoin').onclick=()=>{mk();view('join');};
 $('#jScan').onclick=()=>scan(c=>makeAnswer(c));
@@ -138,24 +170,30 @@ $('#jApply').onclick=()=>makeAnswer($('#jOffer').value);
 async function makeAnswer(c){
   view('join');
   try{
-    await pc.setRemoteDescription(await unpack(c));
+    await pc.setRemoteDescription(expand(await unpack(c)));
     await pc.setLocalDescription(await pc.createAnswer());status('creating reply…');await gathered();
-    const a=await pack(pc.localDescription.toJSON());
+    const a=await pack(compact(pc.localDescription));
     $('#jOut').hidden=false;$('#jAns').value=a;drawQR($('#qr2'),$('#qrmsg2'),a);status('show reply to other device');
   }catch(e){alert('Invalid code. Try again.');}
 }
 
 // ---- camera scanner ----
 async function scan(cb){
-  try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});}
+  try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});}
   catch(e){alert('Camera unavailable. Paste the code instead.');return;}
   const v=$('#vid');v.srcObject=cam;await v.play();view('scanbox');
   const c=document.createElement('canvas'),x=c.getContext('2d',{willReadFrequently:true});
-  const tick=()=>{
+  const bd=window.BarcodeDetector?new BarcodeDetector({formats:['qr_code']}):null;
+  const tick=async()=>{
     if(!cam)return;
-    if(v.videoWidth){c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0);
-      const r=jsQR(x.getImageData(0,0,c.width,c.height).data,c.width,c.height);
-      if(r&&r.data){stopCam();cb(r.data);return;}}
+    if(v.videoWidth){
+      let d=null;
+      try{if(bd){const r=await bd.detect(v);if(r[0])d=r[0].rawValue;}}catch(e){}
+      if(!d){c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0);
+        const r=jsQR(x.getImageData(0,0,c.width,c.height).data,c.width,c.height,{inversionAttempts:'dontInvert'});
+        if(r&&r.data)d=r.data;}
+      if(d){stopCam();cb(d);return;}
+    }
     requestAnimationFrame(tick);
   };
   tick();
@@ -203,11 +241,38 @@ async function send(f){
   }
   dc.send(JSON.stringify({t:'end'}));row.firstChild.textContent+=' ✓';
 }
-$('#bDisc').onclick=()=>{if(pc)pc.close();stopCam();status('not connected');view('home');};
+$('#bDisc').onclick=()=>{endPc();status('not connected');view('home');};
 document.addEventListener('click',e=>{
   const id=e.target.dataset&&e.target.dataset.copy;
   if(id){const t=$('#'+id);t.select();navigator.clipboard?.writeText(t.value);e.target.textContent='Copied ✓';}
 });
+// ---- short-code fallback (PeerJS used only to introduce the devices; files still go peer-to-peer) ----
+let peer;
+const AL='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const newCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(6)),x=>AL[x%AL.length]).join('');
+function endPc(){try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}stopCam();}
+function useConn(c){
+  c.on('open',()=>{const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;status('connected');view('xfer');});
+  c.on('close',()=>status('disconnected'));
+  c.on('error',e=>alert('Connection error: '+e.type));
+}
+function hostCode(){
+  const code=newCode();peer=new Peer('dt-'+code);status('getting code…');
+  peer.on('open',()=>{$('#myCode').textContent=code.slice(0,3)+' '+code.slice(3);status('waiting for other device');});
+  peer.on('connection',useConn);
+  peer.on('error',e=>{if(e.type==='unavailable-id'){try{peer.destroy()}catch(x){}hostCode();}else alert('Could not reach the code service ('+e.type+'). Check your internet.');});
+}
+document.querySelectorAll('.toCode').forEach(b=>b.onclick=()=>{endPc();status('not connected');view('code');});
+$('#cBack').onclick=()=>{endPc();$('#cShowBox').hidden=true;status('not connected');view('home');};
+$('#cShow').onclick=()=>{endPc();$('#cShowBox').hidden=false;$('#myCode').textContent='…';hostCode();};
+$('#cGo').onclick=()=>{
+  const code=$('#cIn').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(code.length!==6)return alert('Enter the 6-character code.');
+  endPc();status('connecting…');peer=new Peer();
+  peer.on('open',()=>{useConn(peer.connect('dt-'+code,{reliable:true}));
+    setTimeout(()=>{if($('#st').textContent==='connecting…')status('not connected');},15000);});
+  peer.on('error',e=>{status('not connected');alert(e.type==='peer-unavailable'?'Code not found. Check it and try again.':'Could not connect ('+e.type+').');});
+};
 view('home');
 </script>
 </body>
