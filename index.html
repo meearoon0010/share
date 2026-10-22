@@ -85,11 +85,13 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 </section>
 
 <section id="xfer" class="card" hidden>
+  <div id="stats" class="m" style="margin-bottom:10px;line-height:1.6"></div>
   <b>Send files</b>
   <input type="file" id="pick" multiple hidden>
   <button id="bPick">Choose files to send</button>
   <div id="out"></div>
   <b style="display:block;margin-top:16px">Received</b>
+  <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button></div>
   <div id="inbox" class="m">Nothing yet.</div>
   <label class="m" style="display:block;margin-top:12px"><input type="checkbox" id="bg" checked> Keep running when minimized (plays inaudible audio)</label>
   <div id="warn" class="m" hidden style="color:#dc2626"></div>
@@ -224,13 +226,17 @@ function onMsg(e){
     if(m.t==='meta'){
       const row=document.createElement('div');row.className='row';
       row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';
-      row.firstChild.textContent='⬇ '+m.name+' ('+fmt(m.size)+')';
+      row.firstChild.textContent='⬇ '+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')';
       if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
-      $('#inbox').prepend(row);rx={m,parts:[],got:0,row,t0:performance.now(),lu:0,label:'⬇ '+m.name+' ('+fmt(m.size)+')'};
+      $('#inbox').prepend(row);rx={m,parts:[],got:0,row,t0:performance.now(),lu:0,label:'⬇ '+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')'};
     }else if(m.t==='end'&&rx){
       const blob=new Blob(rx.parts,{type:rx.m.type||'application/octet-stream'});
-      const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=rx.m.name;a.className='btn';a.textContent='Save '+rx.m.name;
-      rx.row.querySelector('progress').replaceWith(a);rx=null;
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=url;a.download=rx.m.name;a.className='btn';a.textContent='Save '+rx.m.name;
+      rx.row.querySelector('progress').replaceWith(a);
+      rx.row.firstChild.textContent=rx.label+' ✓ '+speed(rx.got,performance.now()-rx.t0);
+      const it={name:rx.m.name,blob,url,done:false,badge:document.createElement('div')};it.badge.className='m';it.badge.textContent='⏳ Not downloaded yet';rx.row.appendChild(it.badge);
+      a.addEventListener('click',()=>markDl(it));received.push(it);stats.recvDone++;stats.recvBytes+=rx.m.size;renderStats();rx=null;
     }
   }else if(rx){
     rx.parts.push(e.data);rx.got+=e.data.byteLength;
@@ -239,19 +245,21 @@ function onMsg(e){
   }
 }
 $('#bPick').onclick=()=>$('#pick').click();
-$('#pick').onchange=async e=>{for(const f of e.target.files)await send(f);e.target.value='';};
-async function send(f){
+$('#pick').onchange=async e=>{const fs=[...e.target.files];e.target.value='';stats.sentTotal+=fs.length;renderStats();let i=0;for(const f of fs)await send(f,++i,fs.length);};
+async function send(f,i,n){
   const row=document.createElement('div');row.className='row';
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
-  const label='⬆ '+f.name+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
-  dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type}));
+  const label='⬆ '+(n>1?'['+i+'/'+n+'] ':'')+f.name+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
+  const fail=()=>{row.firstChild.textContent=label+' — failed';stats.failed++;renderStats();};
+  if(!dc||dc.readyState!=='open')return fail();
+  dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,i,n}));
   const t0=performance.now();
   for(let o=0;o<f.size;o+=BLOCK){
     const buf=await f.slice(o,o+BLOCK).arrayBuffer();
-    for(let i=0;i<buf.byteLength;i+=CHUNK){
-      if(dc.readyState!=='open'){row.firstChild.textContent=label+' — failed';return;}
+    for(let k=0;k<buf.byteLength;k+=CHUNK){
+      if(dc.readyState!=='open')return fail();
       if(dc.bufferedAmount>HIGH)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r();};});
-      dc.send(new Uint8Array(buf,i,Math.min(CHUNK,buf.byteLength-i)));
+      dc.send(new Uint8Array(buf,k,Math.min(CHUNK,buf.byteLength-k)));
     }
     const done=Math.min(o+BLOCK,f.size);
     row.querySelector('progress').value=done;
@@ -259,6 +267,7 @@ async function send(f){
   }
   dc.send(JSON.stringify({t:'end'}));
   row.firstChild.textContent=label+' ✓ '+speed(f.size,performance.now()-t0);
+  stats.sentDone++;stats.sentBytes+=f.size;renderStats();
 }
 $('#bDisc').onclick=()=>{endPc();status('not connected');view('home');};
 document.addEventListener('click',e=>{
@@ -320,6 +329,49 @@ document.addEventListener('visibilitychange',()=>{
   else w.hidden=true;
 });
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+// ---- tracking + download all ----
+const stats={sentTotal:0,sentDone:0,sentBytes:0,failed:0,recvDone:0,recvBytes:0};
+const received=[];
+function renderStats(){
+  const dl=received.filter(f=>f.done).length,wait=received.length-dl;
+  $('#stats').innerHTML='⬆ Sent <b>'+stats.sentDone+'</b> of '+stats.sentTotal+' files ('+fmt(stats.sentBytes)+')'
+    +(stats.failed?' · <span style="color:#dc2626">'+stats.failed+' failed</span>':'')
+    +'<br>⬇ Received <b>'+stats.recvDone+'</b> files ('+fmt(stats.recvBytes)+')'
+    +'<br>💾 Downloaded <b>'+dl+'</b> · ⏳ Waiting to download <b>'+(received.length-dl)+'</b>';
+  $('#dlbar').hidden=!received.length;
+  $('#dlAll').textContent=wait?'Download remaining ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;$('#dlZip').textContent='Download all '+received.length+' as ZIP';
+}
+function markDl(it){it.done=true;it.badge.textContent='✓ Downloaded';it.badge.className='ok';renderStats();}
+function uniqueNames(){const seen={};return received.map(f=>{const k=f.name;if(!seen[k]){seen[k]=1;return k;}
+  const d=k.lastIndexOf('.'),b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
+function saveBlobUrl(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
+$('#dlAll').onclick=async()=>{const nm=uniqueNames();for(let i=0;i<received.length;i++){if(received[i].done)continue;saveBlobUrl(received[i].url,nm[i]);markDl(received[i]);await new Promise(r=>setTimeout(r,700));}};
+$('#dlZip').onclick=async()=>{
+  const total=received.reduce((a,f)=>a+f.blob.size,0);
+  if(total>1.5e9)return alert('Too large for one ZIP (over 1.5 GB). Use Download all instead.');
+  const nm=uniqueNames(),b=await makeZip(received.map((f,i)=>({name:nm[i],blob:f.blob})));
+  const u=URL.createObjectURL(b);saveBlobUrl(u,'transfer-'+new Date().toISOString().slice(0,10)+'.zip');received.forEach(markDl);setTimeout(()=>URL.revokeObjectURL(u),60000);
+};
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(u){let c=-1;for(let i=0;i<u.length;i++)c=CRC[(c^u[i])&255]^(c>>>8);return (c^-1)>>>0;}
+async function makeZip(files){
+  const enc=new TextEncoder(),parts=[],cen=[];let off=0;
+  for(const f of files){
+    const data=new Uint8Array(await f.blob.arrayBuffer()),name=enc.encode(f.name),crc=crc32(data);
+    const h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(12,0x21,true);
+    h.setUint32(14,crc,true);h.setUint32(18,data.length,true);h.setUint32(22,data.length,true);h.setUint16(26,name.length,true);
+    parts.push(h.buffer,name,data);
+    const c=new DataView(new ArrayBuffer(46));
+    c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(14,0x21,true);
+    c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,name.length,true);c.setUint32(42,off,true);
+    cen.push(c.buffer,name);off+=30+name.length+data.length;
+  }
+  const cs=cen.reduce((a,p)=>a+p.byteLength,0),e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cs,true);e.setUint32(16,off,true);
+  return new Blob([...parts,...cen,e.buffer],{type:'application/zip'});
+}
+renderStats();
 view('home');
 </script>
 </body>
