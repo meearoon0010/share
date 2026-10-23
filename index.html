@@ -86,7 +86,9 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 
 <section id="xfer" class="card" hidden>
   <div id="stats" class="m" style="margin-bottom:10px;line-height:1.6"></div>
+  <div id="path" class="m" style="margin-bottom:10px"></div>
   <b>Send files</b>
+  <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="shrink"> Shrink photos before sending (faster, slightly lower quality)</label>
   <input type="file" id="pick" multiple hidden>
   <button id="bPick">Choose files to send</button>
   <div id="out"></div>
@@ -105,12 +107,13 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-const CHUNK=65536,BLOCK=1024*1024,HIGH=8*1024*1024;
+const BLOCK=2*1024*1024,HIGH=12*1024*1024;
 let pc,dc,cam,rx=null;
 
 const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
 const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s);
-  keepAlive(ids.includes('xfer')&&$('#bg').checked);};
+  keepAlive(ids.includes('xfer')&&$('#bg').checked);
+  if(ids.includes('xfer'))setTimeout(pathInfo,1500);};
 const status=t=>{$('#st').textContent=t;$('#st').className='pill'+(t==='connected'?' ok':'')};
 
 // ---- encode/decode signalling (compressed + base64url) ----
@@ -214,10 +217,11 @@ $('#scanX').onclick=()=>{stopCam();view(pc&&pc.localDescription&&pc.localDescrip
 
 // ---- file transfer ----
 function wire(ch){
-  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=2*1024*1024;
+  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=4*1024*1024;
   dc.onmessage=onMsg;
   dc.onclose=()=>status('disconnected');
 }
+function left(d,t,ms){if(!d||ms<1000)return'';const s=Math.round((t-d)/(d/ms)/1000);return ' · '+(s>=60?Math.floor(s/60)+'m '+s%60+'s':s+'s')+' left';}
 function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
 function onMsg(e){
@@ -241,11 +245,11 @@ function onMsg(e){
   }else if(rx){
     rx.parts.push(e.data);rx.got+=e.data.byteLength;
     const n=performance.now();
-    if(n-rx.lu>250){rx.lu=n;rx.row.querySelector('progress').value=rx.got;rx.row.firstChild.textContent=rx.label+' · '+speed(rx.got,n-rx.t0);}
+    if(n-rx.lu>250){rx.lu=n;rx.row.querySelector('progress').value=rx.got;rx.row.firstChild.textContent=rx.label+' · '+speed(rx.got,n-rx.t0)+left(rx.got,rx.m.size,n-rx.t0);}
   }
 }
 $('#bPick').onclick=()=>$('#pick').click();
-$('#pick').onchange=async e=>{const fs=[...e.target.files];e.target.value='';stats.sentTotal+=fs.length;renderStats();let i=0;for(const f of fs)await send(f,++i,fs.length);};
+$('#pick').onchange=async e=>{const fs=[...e.target.files];e.target.value='';stats.sentTotal+=fs.length;renderStats();let i=0;for(const f0 of fs){const f=await shrink(f0);await send(f,++i,fs.length);}};
 async function send(f,i,n){
   const row=document.createElement('div');row.className='row';
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
@@ -253,17 +257,18 @@ async function send(f,i,n){
   const fail=()=>{row.firstChild.textContent=label+' — failed';stats.failed++;renderStats();};
   if(!dc||dc.readyState!=='open')return fail();
   dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,i,n}));
+  const mm=(pc&&pc.sctp&&pc.sctp.maxMessageSize)||65536,CH=Math.max(16384,Math.min(131072,mm));
   const t0=performance.now();
   for(let o=0;o<f.size;o+=BLOCK){
     const buf=await f.slice(o,o+BLOCK).arrayBuffer();
-    for(let k=0;k<buf.byteLength;k+=CHUNK){
+    for(let k=0;k<buf.byteLength;k+=CH){
       if(dc.readyState!=='open')return fail();
       if(dc.bufferedAmount>HIGH)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r();};});
-      dc.send(new Uint8Array(buf,k,Math.min(CHUNK,buf.byteLength-k)));
+      dc.send(new Uint8Array(buf,k,Math.min(CH,buf.byteLength-k)));
     }
     const done=Math.min(o+BLOCK,f.size);
     row.querySelector('progress').value=done;
-    row.firstChild.textContent=label+' · '+speed(done,performance.now()-t0);
+    row.firstChild.textContent=label+' · '+speed(done,performance.now()-t0)+left(done,f.size,performance.now()-t0);
   }
   dc.send(JSON.stringify({t:'end'}));
   row.firstChild.textContent=label+' ✓ '+speed(f.size,performance.now()-t0);
@@ -280,7 +285,7 @@ const AL='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(6)),x=>AL[x%AL.length]).join('');
 function endPc(){try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}stopCam();}
 function useConn(c){
-  c.on('open',()=>{const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;status('connected');view('xfer');});
+  c.on('open',()=>{pc=c.peerConnection;const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;status('connected');view('xfer');});
   c.on('close',()=>status('disconnected'));
   c.on('error',e=>alert('Connection error: '+e.type));
 }
@@ -372,6 +377,30 @@ async function makeZip(files){
   return new Blob([...parts,...cen,e.buffer],{type:'application/zip'});
 }
 renderStats();
+// ---- speed diagnostics + optional photo shrinking ----
+async function pathInfo(){
+  try{
+    const st=await pc.getStats();let pair;const c={};
+    st.forEach(r=>{if(r.type==='candidate-pair'&&r.state==='succeeded'&&(r.nominated||r.selected))pair=r;if(/candidate$/.test(r.type))c[r.id]=r;});
+    if(!pair)return;
+    const t=[(c[pair.localCandidateId]||{}).candidateType,(c[pair.remoteCandidateId]||{}).candidateType];
+    const rtt=pair.currentRoundTripTime?' · '+Math.round(pair.currentRoundTripTime*1000)+' ms':'';
+    let k='Local network (fastest)';
+    if(t.includes('relay'))k='Relay (slow)';else if(t.includes('srflx')||t.includes('prflx'))k='Over the internet (slower) — put both phones on the same Wi-Fi or one phone\'s hotspot for more speed';
+    $('#path').textContent='Connection: '+k+rtt;
+  }catch(e){}
+}
+async function shrink(f){
+  if(!$('#shrink').checked||!/^image\/(jpeg|png|heic|heif|webp)/i.test(f.type))return f;
+  try{
+    const bm=await createImageBitmap(f),sc=Math.min(1,2560/Math.max(bm.width,bm.height));
+    const c=document.createElement('canvas');c.width=Math.round(bm.width*sc);c.height=Math.round(bm.height*sc);
+    c.getContext('2d').drawImage(bm,0,0,c.width,c.height);
+    const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.85));
+    if(!b||b.size>=f.size)return f;
+    return new File([b],f.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});
+  }catch(e){return f;}
+}
 view('home');
 </script>
 </body>
