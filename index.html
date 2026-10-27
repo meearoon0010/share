@@ -41,6 +41,18 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <button id="bStart">Start (show my QR first)</button>
   <button class="g" id="bJoin">Join (scan the other device)</button>
   <button class="g toCode">QR not working? Use a short code</button>
+  <div id="devWrap" hidden>
+    <b style="display:block;margin-top:16px">📡 My devices</b>
+    <div class="m">Tap Connect — no QR or code needed. Open this app on the other device too.</div>
+    <div id="devList"></div>
+  </div>
+  <button class="g" id="bLib">📥 Received files (0)</button>
+  <details style="margin-top:12px"><summary class="m" style="cursor:pointer">⚙ Settings (AirDrop-style)</summary>
+    <label class="m" style="display:block;margin-top:8px">This device's name<input id="devName" maxlength="30" style="width:100%;margin-top:4px;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font:inherit"></label>
+    <label class="m" style="display:block;margin-top:8px"><input type="checkbox" id="recvOn" checked> Receiving on (turn off to decline everything)</label>
+    <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="autoAcc"> Auto-accept files from my devices</label>
+    <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="remember" checked> Remember devices I connect to</label>
+  </details>
 </section>
 
 <section id="host" class="card" hidden>
@@ -87,6 +99,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 </section>
 
 <section id="xfer" class="card" hidden>
+  <div id="peerLine" style="font-weight:600;margin-bottom:6px"></div>
   <div id="stats" class="m" style="margin-bottom:10px;line-height:1.6"></div>
   <div id="path" class="m" style="margin-bottom:10px"></div>
   <b>Send files</b>
@@ -102,15 +115,31 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <div class="m" style="margin-top:6px">On a computer you can also drag &amp; drop files or whole folders onto this page. (Phones: folder picking needs iOS 18.4+ or Chrome 132+ on Android.)</div>
   <div id="fnote" class="m" style="margin-top:4px"></div>
   <div id="out"></div>
+  <div id="slotX"><div id="recvBox">
   <b style="display:block;margin-top:16px">Received</b>
   <button class="g" id="bSaveDir" hidden>💾 Save received files straight to a folder</button>
   <div id="saveDirInfo" class="m"></div>
-  <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button></div>
+  <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button>
+    <button class="g" id="dlDel">🗑 Delete files I've downloaded</button><button class="g" id="dlClr">🗑 Delete everything received</button></div>
   <div id="inbox" class="m">Nothing yet.</div>
+  </div></div>
   <label class="m" style="display:block;margin-top:12px"><input type="checkbox" id="bg" checked> Keep running when minimized (plays inaudible audio)</label>
   <div id="warn" class="m" hidden style="color:#dc2626"></div>
   <button class="g" id="bDisc">Disconnect</button>
 </section>
+<section id="lib" class="card" hidden>
+  <b>📥 Received files</b>
+  <div class="m">Kept on this device until you delete them — even after disconnecting or closing the app.</div>
+  <div id="slotL"></div>
+  <button class="g" id="libBack">Back</button>
+</section>
+<div id="prompt" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50">
+  <div class="card" style="max-width:360px;width:100%;text-align:center;margin:0">
+    <div id="pThumb"></div><b id="pTitle" style="font-size:18px"></b>
+    <div class="m" id="pBody" style="margin-top:6px"></div>
+    <button id="pOk">Accept</button><button class="g" id="pNo">Decline</button>
+  </div>
+</div>
 <p class="m"><b>For top speed:</b> put both phones on the same 5 GHz Wi-Fi, or turn on one phone's hotspot and join it from the other (works with no internet). Keep both screens on. Files over ~1 GB may fail on iPhone due to memory limits.</p>
 </main>
 
@@ -122,8 +151,9 @@ const $=s=>document.querySelector(s);
 const BLOCK=2*1024*1024,HIGH=12*1024*1024;
 let pc,dc,cam,rx=null;
 
-const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
-const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer'])$('#'+s).hidden=!ids.includes(s);
+const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer','lib'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
+const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer','lib'])$('#'+s).hidden=!ids.includes(s);
+  const slot=$(ids.includes('lib')?'#slotL':'#slotX');if(slot&&$('#recvBox').parentNode!==slot)slot.appendChild($('#recvBox'));
   keepAlive(ids.includes('xfer')&&$('#bg').checked);
   if(ids.includes('xfer'))setTimeout(pathInfo,1500);};
 const status=t=>{$('#st').textContent=t;$('#st').className='pill'+(t==='connected'?' ok':'')};
@@ -167,12 +197,18 @@ function drawQR(el,msg,code){
 // ---- WebRTC ----
 function mk(){
   pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-  pc.onconnectionstatechange=()=>{
-    const s=pc.connectionState;status(s==='connected'?'connected':s);
-    if(s==='connected')view('xfer');
-    if(['failed','disconnected','closed'].includes(s)&&s!=='connected')status(s);
-  };
+  watchPc(pc);
   pc.ondatachannel=e=>wire(e.channel);
+}
+let dTimer=null;
+function watchPc(me){
+  me.onconnectionstatechange=()=>{
+    if(me!==pc)return;
+    const s=me.connectionState;status(s==='connected'?'connected':s);
+    if(s==='connected'){clearTimeout(dTimer);view('xfer');}
+    if(s==='disconnected'){clearTimeout(dTimer);dTimer=setTimeout(()=>{if(me===pc&&me.connectionState!=='connected')dropped();},8000);}
+    if(s==='failed'||s==='closed')dropped();
+  };
 }
 const gathered=()=>new Promise(r=>{
   if(pc.iceGatheringState==='complete')return r();
@@ -181,7 +217,7 @@ const gathered=()=>new Promise(r=>{
 });
 
 $('#bStart').onclick=async()=>{
-  mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
+  newSession('h');mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
   await pc.setLocalDescription(await pc.createOffer());await gathered();
   const c=await pack(compact(pc.localDescription));
   $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);status('waiting for reply');
@@ -190,7 +226,7 @@ $('#hScan').onclick=()=>scan(c=>applyAnswer(c));
 $('#hApply').onclick=()=>applyAnswer($('#hAns').value);
 async function applyAnswer(c){try{await pc.setRemoteDescription(expand(await unpack(c)));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
 
-$('#bJoin').onclick=()=>{mk();view('join');};
+$('#bJoin').onclick=()=>{newSession('g');mk();view('join');};
 $('#jScan').onclick=()=>scan(c=>makeAnswer(c));
 $('#jApply').onclick=()=>makeAnswer($('#jOffer').value);
 async function makeAnswer(c){
@@ -231,7 +267,10 @@ $('#scanX').onclick=()=>{stopCam();view(pc&&pc.localDescription&&pc.localDescrip
 function wire(ch){
   dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=4*1024*1024;
   dc.onmessage=onMsg;
-  dc.onclose=()=>status('disconnected');
+  dc.onclose=()=>onDcClose(ch);
+  const hs=()=>{if(!sess&&myRole==='h'){const tok=randTok();setSess(tok,'h');try{ch.send(JSON.stringify({t:'sess',tok}));}catch(e){}}
+    try{ch.send(JSON.stringify({t:'hello',id:myId,name:myName(),plat:PLAT,v:2}));}catch(e){}};
+  if(ch.readyState==='open')hs();else ch.addEventListener('open',hs,{once:true});
 }
 function left(d,t,ms){if(!d||ms<1000)return'';const s=Math.round((t-d)/(d/ms)/1000);return ' · '+(s>=60?Math.floor(s/60)+'m '+s%60+'s':s+'s')+' left';}
 const AUD={mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav',flac:'audio/flac',ogg:'audio/ogg',opus:'audio/ogg',amr:'audio/amr',aif:'audio/aiff',aiff:'audio/aiff',wma:'audio/x-ms-wma'};
@@ -242,23 +281,67 @@ function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
 let saveDir=null;
 const cleanPath=p=>String(p||'').replace(/\\/g,'/').split('/').filter(x=>x&&x!=='.'&&x!=='..');
+function completeRow(it,row){
+  const pr=row.querySelector('progress');if(pr)pr.remove();it.row=row;
+  if(it.blob){
+    it.url=URL.createObjectURL(it.blob);
+    const a=document.createElement('a');a.href=it.url;a.download=it.base;a.className='btn';a.textContent='Save '+it.base;
+    a.addEventListener('click',()=>markDl(it));row.appendChild(a);
+    if(isAudio(it.base,it.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=it.url;au.style.cssText='width:100%;margin-top:6px';row.appendChild(au);}
+  }
+  it.badge=document.createElement('div');it.badge.className=it.done?'ok':'m';
+  it.badge.textContent=it.blob?(it.done?'✓ Downloaded':'⏳ Not downloaded yet'):'✓ Saved to your folder';row.appendChild(it.badge);
+  const x=document.createElement('button');x.className='g';x.textContent='🗑 Delete';x.style.cssText='padding:6px;font-size:13px;margin-top:6px';
+  x.onclick=()=>{if(confirm('Delete '+it.base+' from this device?'))delItems([it]);};row.appendChild(x);
+}
 function finishRx(r,blob){
-  const it={name:r.path,blob,url:null,done:false,badge:document.createElement('div')};it.badge.className='m';
   r.row.firstChild.textContent=r.label+' ✓ '+speed(r.got,performance.now()-r.t0);
-  const pr=r.row.querySelector('progress');
-  if(blob){
-    const url=URL.createObjectURL(blob);it.url=url;
-    const a=document.createElement('a');a.href=url;a.download=r.base;a.className='btn';a.textContent='Save '+r.base;pr.replaceWith(a);
-    it.badge.textContent='⏳ Not downloaded yet';r.row.appendChild(it.badge);
-    if(isAudio(r.base,blob.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=url;au.style.cssText='width:100%;margin-top:6px';r.row.appendChild(au);}
-    a.addEventListener('click',()=>markDl(it));
-  }else{pr.remove();it.done=true;it.badge.textContent='✓ Saved to your folder';it.badge.className='ok';r.row.appendChild(it.badge);}
-  received.push(it);stats.recvDone++;stats.recvBytes+=r.m.size;renderStats();
+  const it={id:Date.now()+'-'+Math.random().toString(36).slice(2,7),name:r.path,base:r.base,size:r.m.size,type:blob?blob.type:(r.m.type||''),blob,done:!blob,disk:!blob,t:Date.now(),from:peerInfo?peerInfo.name:'',url:null};
+  completeRow(it,r.row);received.push(it);stats.recvDone++;stats.recvBytes+=r.m.size;renderStats();
+  dbSave(it).then(ok=>{if(!ok&&blob)note('Could not keep a saved copy of '+r.base+' (storage full?). Download it now.');});
+}
+// ---- persistent library (IndexedDB) ----
+let db=null;
+const dbReq=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+const dbTx=tx=>new Promise((res,rej)=>{tx.oncomplete=()=>res(true);tx.onerror=()=>rej(tx.error);tx.onabort=()=>rej(tx.error);});
+const metaOf=it=>({id:it.id,name:it.name,base:it.base,size:it.size,type:it.type,done:it.done,disk:it.disk,t:it.t,from:it.from});
+function dbOpen(){return new Promise((res,rej)=>{const q=indexedDB.open('dt-files',1);q.onupgradeneeded=()=>{q.result.createObjectStore('meta',{keyPath:'id'});q.result.createObjectStore('blobs');};q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+async function dbSave(it){if(!db)return false;try{const tx=db.transaction(['meta','blobs'],'readwrite');tx.objectStore('meta').put(metaOf(it));if(it.blob)tx.objectStore('blobs').put(it.blob,it.id);await dbTx(tx);return true;}catch(e){return false;}}
+async function dbMeta(it){if(!db)return;try{const tx=db.transaction('meta','readwrite');tx.objectStore('meta').put(metaOf(it));await dbTx(tx);}catch(e){}}
+async function dbDel(ids){if(!db)return;try{const tx=db.transaction(['meta','blobs'],'readwrite');for(const id of ids){tx.objectStore('meta').delete(id);tx.objectStore('blobs').delete(id);}await dbTx(tx);}catch(e){}}
+function delItems(list){
+  for(const it of list){const i=received.indexOf(it);if(i>=0)received.splice(i,1);if(it.url)URL.revokeObjectURL(it.url);if(it.row)it.row.remove();}
+  dbDel(list.map(i=>i.id));stats.recvDone=received.length;stats.recvBytes=received.reduce((a,f)=>a+f.size,0);
+  if(!received.length){$('#inbox').textContent='Nothing yet.';$('#inbox').classList.add('m');}
+  renderStats();
+}
+async function loadSaved(){
+  const metas=await dbReq(db.transaction('meta').objectStore('meta').getAll());
+  metas.sort((a,b)=>a.t-b.t);
+  for(const m of metas){
+    let blob=null;
+    if(!m.disk){blob=await dbReq(db.transaction('blobs').objectStore('blobs').get(m.id));if(!blob)continue;}
+    const it=Object.assign({},m,{blob,url:null});
+    const row=document.createElement('div');row.className='row';row.innerHTML='<div></div>';
+    row.firstChild.textContent=(isAudio(it.base,it.type)?'🎵 ':'⬇ ')+it.name+' ('+fmt(it.size)+')'+(it.from?' · from '+it.from:'')+' · '+new Date(it.t).toLocaleString();
+    if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
+    $('#inbox').prepend(row);completeRow(it,row);received.push(it);
+  }
+  stats.recvDone=received.length;stats.recvBytes=received.reduce((a,f)=>a+f.size,0);renderStats();
 }
 function onMsg(e){
   if(typeof e.data==='string'){
     const m=JSON.parse(e.data);
+    if(m.t==='sess'){if(myRole==='g'&&/^[0-9a-f]{32}$/.test(m.tok))setSess(m.tok,'g');return;}
+    if(m.t==='bye'){userClosed=true;resuming=false;attemptId++;clearTimeout(rcTimer);clearSess();warnMsg('The other device disconnected.');status('disconnected');return;}
+    if(m.t==='hello'){gotHello(m);return;}
+    if(m.t==='proof'){if(peerInfo&&peerInfo.id&&devs[peerInfo.id]&&devs[peerInfo.id].key===m.key){peerInfo.paired=true;showPeer();}return;}
+    if(m.t==='pair'){if(peerInfo&&peerInfo.id&&$('#remember').checked&&/^[0-9a-f]{32}$/.test(m.key)){devs[peerInfo.id]={name:peerInfo.name,plat:peerInfo.plat,key:m.key,last:Date.now()};saveDevs();peerInfo.paired=true;showPeer();}return;}
+    if(m.t==='offer'){onOffer(m);return;}
+    if(m.t==='accept'||m.t==='decline'){const f=pending[m.oid];if(f){delete pending[m.oid];f(m.t==='accept');}return;}
     if(m.t==='meta'){
+      if(!$('#recvOn').checked)return;
+      if(peerInfo&&peerInfo.v>=2&&(!accepted||m.b!==accepted.oid))return;
       const parts=cleanPath(m.path||m.name);if(!parts.length)parts.push('file');
       const path=parts.join('/'),base=parts[parts.length-1];
       const label=(isAudio(base,m.type)?'🎵 ':'⬇ ')+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+path+' ('+fmt(m.size)+')';
@@ -285,15 +368,34 @@ function onMsg(e){
 document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{const p=$('#pick');if(b.dataset.acc)p.setAttribute('accept',b.dataset.acc);else p.removeAttribute('accept');p.click();});
 let curWarn='';
 const note=t=>{$('#fnote').textContent=t+(curWarn?' ⚠ '+curWarn:'');};
-async function sendFiles(fs,warn){
+const waitOpen=ms=>new Promise(r=>{const t0=Date.now();const iv=setInterval(()=>{
+  if(dc&&dc.readyState==='open'){clearInterval(iv);r(true);}
+  else if(Date.now()-t0>ms||userClosed||!sess){clearInterval(iv);r(false);}},500);});
+async function ensureOpen(){
+  if(dc&&dc.readyState==='open')return true;
+  if(!sess||userClosed)return false;
+  note('Connection lost — waiting for it to reconnect, then continuing…');
+  return waitOpen(180000);
+}
+let sendQ=Promise.resolve();
+function sendFiles(fs,warn){const p=sendQ.then(()=>sendFiles0(fs,warn));sendQ=p.catch(()=>{});return p;}
+async function sendFiles0(fs,warn){
   curWarn=warn||'';
-  if(!dc||dc.readyState!=='open'){note('Not connected — connect the two devices first.');return;}
+  if(!(await ensureOpen())){note('Not connected — connect the two devices first.');return;}
+  const acc=await askAccept(fs);
+  if(!acc.ok){note(acc.declined?(peerInfo?peerInfo.name:'The other device')+' declined the transfer.':'No response — '+(peerInfo?peerInfo.name:'the other device')+' did not accept in time.');return;}
+  batchId=acc.oid;
   stats.sentTotal+=fs.length;renderStats();
   const ok0=stats.sentDone,bad0=stats.failed;
   for(let k=0;k<fs.length;k++){
     const f0=fs[k];note('Sending '+(k+1)+' of '+fs.length+': '+(f0._p||f0.webkitRelativePath||f0.name));
-    try{const f=await shrink(f0);await send(f,k+1,fs.length);}
-    catch(err){stats.failed+=fs.length-k;renderStats();note('Stopped: '+((err&&err.message)||err)+'. '+(fs.length-k)+' file(s) not sent — check the connection and try again.');return;}
+    const f=await shrink(f0);let ok=false;
+    for(let a=0;a<4&&!ok;a++){
+      if(!(await ensureOpen()))break;
+      try{ok=await send(f,k+1,fs.length);}catch(err){ok=false;}
+      if(!ok)note('Connection lost while sending — will retry this file after reconnecting…');
+    }
+    if(!ok){stats.failed+=fs.length-k;renderStats();note('Stopped: the connection was lost and could not be restored. '+(fs.length-k)+' file(s) not sent.');return;}
   }
   note('Done: '+(stats.sentDone-ok0)+' of '+fs.length+' files sent'+(stats.failed>bad0?' ('+(stats.failed-bad0)+' failed)':'')+'.');
 }
@@ -329,27 +431,35 @@ async function send(f,i,n){
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
   const pth=f._p||f.webkitRelativePath||f.name;
   const label=(isAudio(f.name,f.type)?'🎵⬆ ':'⬆ ')+(n>1?'['+i+'/'+n+'] ':'')+pth+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
-  const fail=()=>{row.firstChild.textContent=label+' — failed';stats.failed++;renderStats();};
-  if(!dc||dc.readyState!=='open')return fail();
-  dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,path:pth,i,n}));
-  const mm=(pc&&pc.sctp&&pc.sctp.maxMessageSize)||65536,CH=Math.max(16384,Math.min(131072,mm));
+  const fail=()=>{row.firstChild.textContent=label+' — interrupted';return false;};
   const t0=performance.now();
-  for(let o=0;o<f.size;o+=BLOCK){
-    const buf=await f.slice(o,o+BLOCK).arrayBuffer();
-    for(let k=0;k<buf.byteLength;k+=CH){
-      if(dc.readyState!=='open')return fail();
-      if(dc.bufferedAmount>HIGH)await new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r();};});
-      dc.send(new Uint8Array(buf,k,Math.min(CH,buf.byteLength-k)));
+  try{
+    if(!dc||dc.readyState!=='open')return fail();
+    const ch=dc;
+    ch.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,path:pth,i,n,b:batchId}));
+    const mm=(pc&&pc.sctp&&pc.sctp.maxMessageSize)||65536,CH=Math.max(16384,Math.min(131072,mm));
+    for(let o=0;o<f.size;o+=BLOCK){
+      const buf=await f.slice(o,o+BLOCK).arrayBuffer();
+      for(let k=0;k<buf.byteLength;k+=CH){
+        if(ch.readyState!=='open')return fail();
+        if(ch.bufferedAmount>HIGH)await new Promise(r=>{let iv;const fin=()=>{clearInterval(iv);ch.onbufferedamountlow=null;r();};iv=setInterval(()=>{if(ch.readyState!=='open')fin();},500);ch.onbufferedamountlow=fin;});
+        if(ch.readyState!=='open')return fail();
+        ch.send(new Uint8Array(buf,k,Math.min(CH,buf.byteLength-k)));
+      }
+      const done=Math.min(o+BLOCK,f.size);
+      row.querySelector('progress').value=done;
+      row.firstChild.textContent=label+' · '+speed(done,performance.now()-t0)+left(done,f.size,performance.now()-t0);
     }
-    const done=Math.min(o+BLOCK,f.size);
-    row.querySelector('progress').value=done;
-    row.firstChild.textContent=label+' · '+speed(done,performance.now()-t0)+left(done,f.size,performance.now()-t0);
-  }
-  dc.send(JSON.stringify({t:'end'}));
+    ch.send(JSON.stringify({t:'end'}));
+  }catch(e){return fail();}
   row.firstChild.textContent=label+' ✓ '+speed(f.size,performance.now()-t0);
-  stats.sentDone++;stats.sentBytes+=f.size;renderStats();
+  stats.sentDone++;stats.sentBytes+=f.size;renderStats();return true;
 }
-$('#bDisc').onclick=()=>{endPc();status('not connected');view('home');};
+$('#bDisc').onclick=()=>{
+  try{if(dc&&dc.readyState==='open')dc.send(JSON.stringify({t:'bye'}));}catch(e){}
+  userClosed=true;resuming=false;attemptId++;clearTimeout(rcTimer);clearSess();
+  setTimeout(endPc,300);status('not connected');warnMsg('');view('home');
+};
 document.addEventListener('click',e=>{
   const id=e.target.dataset&&e.target.dataset.copy;
   if(id){const t=$('#'+id);t.select();navigator.clipboard?.writeText(t.value);e.target.textContent='Copied ✓';}
@@ -359,9 +469,13 @@ let peer;
 const AL='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(6)),x=>AL[x%AL.length]).join('');
 function endPc(){try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}stopCam();}
+function onOpen(c){
+  pc=c.peerConnection;watchPc(pc);const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;
+  status('connected');view('xfer');warnMsg('');setTimeout(pathInfo,1500);
+}
 function useConn(c){
-  c.on('open',()=>{pc=c.peerConnection;const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;status('connected');view('xfer');});
-  c.on('close',()=>status('disconnected'));
+  c.on('open',()=>onOpen(c));
+  c.on('close',()=>onDcClose(c.dataChannel));
   c.on('error',e=>alert('Connection error: '+e.type));
 }
 function hostCode(){
@@ -372,11 +486,11 @@ function hostCode(){
 }
 document.querySelectorAll('.toCode').forEach(b=>b.onclick=()=>{endPc();status('not connected');view('code');});
 $('#cBack').onclick=()=>{endPc();$('#cShowBox').hidden=true;status('not connected');view('home');};
-$('#cShow').onclick=()=>{endPc();$('#cShowBox').hidden=false;$('#myCode').textContent='…';hostCode();};
+$('#cShow').onclick=()=>{newSession('h');endPc();$('#cShowBox').hidden=false;$('#myCode').textContent='…';hostCode();};
 $('#cGo').onclick=()=>{
   const code=$('#cIn').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(code.length!==6)return alert('Enter the 6-character code.');
-  endPc();status('connecting…');peer=new Peer();
+  newSession('g');endPc();status('connecting…');peer=new Peer();
   peer.on('open',()=>{useConn(peer.connect('dt-'+code,{reliable:true}));
     setTimeout(()=>{if($('#st').textContent==='connecting…')status('not connected');},15000);});
   peer.on('error',e=>{status('not connected');alert(e.type==='peer-unavailable'?'Code not found. Check it and try again.':'Could not connect ('+e.type+').');});
@@ -405,8 +519,8 @@ document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible'||$('#xfer').hidden)return;
   if($('#bg').checked)keepAlive(true);
   const w=$('#warn');
-  if(dc&&dc.readyState!=='open'){w.hidden=false;w.textContent='Connection dropped while the app was in the background. Tap Disconnect and reconnect.';}
-  else w.hidden=true;
+  if(dc&&dc.readyState!=='open'){if(sess&&!userClosed)dropped();else{w.hidden=false;w.textContent='Connection dropped while the app was in the background. Tap Disconnect and reconnect.';}}
+  else if(!resuming)w.hidden=true;
 });
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 // ---- tracking + download all ----
@@ -418,10 +532,10 @@ function renderStats(){
     +(stats.failed?' · <span style="color:#dc2626">'+stats.failed+' failed</span>':'')
     +'<br>⬇ Received <b>'+stats.recvDone+'</b> files ('+fmt(stats.recvBytes)+')'
     +'<br>💾 Downloaded <b>'+dl+'</b> · ⏳ Waiting to download <b>'+(received.length-dl)+'</b>';
-  $('#dlbar').hidden=!received.length;
+  $('#dlbar').hidden=!received.length;$('#bLib').textContent='📥 Received files ('+received.length+')';
   $('#dlAll').textContent=wait?'Download remaining ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;const nb=received.filter(f=>f.blob).length;$('#dlZip').hidden=!nb;$('#dlZip').textContent='Download all '+nb+' as ZIP (keeps folders)';
 }
-function markDl(it){it.done=true;it.badge.textContent='✓ Downloaded';it.badge.className='ok';renderStats();}
+function markDl(it){it.done=true;it.badge.textContent='✓ Downloaded';it.badge.className='ok';dbMeta(it);renderStats();}
 function uniqueNames(){const seen={};return received.map(f=>{const k=f.name;if(!seen[k]){seen[k]=1;return k;}
   const sl=k.lastIndexOf('/'),dd=k.lastIndexOf('.'),d=dd>sl+1?dd:-1,b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
 function saveBlobUrl(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
@@ -478,7 +592,184 @@ async function shrink(f){
 }
 if(window.showDirectoryPicker)$('#bSaveDir').hidden=false;
 $('#bSaveDir').onclick=async()=>{try{saveDir=await showDirectoryPicker({mode:'readwrite'});$('#saveDirInfo').textContent='New files are saved to "'+saveDir.name+'" with their folder structure. Large files are written directly to disk.';}catch(e){}};
-view('home');
+// ---- AirDrop-style features: device name, saved devices, accept/decline, receiving on/off ----
+const PLAT=/iPhone|iPad|iPod/.test(navigator.userAgent)?'iOS':/Android/.test(navigator.userAgent)?'Android':/Windows/.test(navigator.userAgent)?'Windows':/Mac/.test(navigator.userAgent)?'Mac':'Other';
+const DEFNAME={iOS:'iPhone',Android:'Android phone',Windows:'Windows PC',Mac:'Mac',Other:'Device'}[PLAT];
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v===null?d:v;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}}};
+let myId=LS.get('dt-id','');if(!/^[0-9a-f]{32}$/.test(myId)){myId=randTok();LS.set('dt-id',myId);}
+let devs={};try{devs=JSON.parse(LS.get('dt-devs','{}'))||{};}catch(e){devs={};}
+let peerInfo=null,accepted=null,batchId=null;const pending={};
+const myName=()=>($('#devName').value.trim()||DEFNAME).slice(0,30);
+const saveDevs=()=>{LS.set('dt-devs',JSON.stringify(devs));renderDevs();if(Object.keys(devs).length)startListening();};
+const sendJ=o=>{try{dc.send(JSON.stringify(o));}catch(e){}};
+const icon=p=>({iOS:'📱',Android:'🤖',Windows:'💻',Mac:'💻'}[p]||'📟');
+function showPeer(){$('#peerLine').textContent=peerInfo?'Connected to '+icon(peerInfo.plat)+' '+peerInfo.name+(peerInfo.paired?' ✓':''):'';}
+$('#devName').value=LS.get('dt-name','');
+$('#recvOn').checked=LS.get('dt-recv','1')==='1';$('#autoAcc').checked=LS.get('dt-auto','0')==='1';$('#remember').checked=LS.get('dt-rem','1')==='1';
+$('#devName').oninput=e=>LS.set('dt-name',e.target.value);
+$('#recvOn').onchange=e=>{LS.set('dt-recv',e.target.checked?'1':'0');e.target.checked?startListening():stopListening();};
+$('#autoAcc').onchange=e=>LS.set('dt-auto',e.target.checked?'1':'0');
+$('#remember').onchange=e=>LS.set('dt-rem',e.target.checked?'1':'0');
+$('#bLib').onclick=()=>view('lib');
+$('#libBack').onclick=()=>view((sess&&!userClosed)||(dc&&dc.readyState==='open')?'xfer':'home');
+$('#dlDel').onclick=()=>{const l=received.filter(f=>f.done&&f.blob);if(l.length&&confirm('Delete '+l.length+' downloaded file(s) from this device?'))delItems(l);};
+$('#dlClr').onclick=()=>{if(received.length&&confirm('Delete ALL '+received.length+' received file(s) from this device?'))delItems([...received]);};
+
+function renderDevs(){
+  const ids=Object.keys(devs).sort((a,b)=>(devs[b].last||0)-(devs[a].last||0));
+  $('#devWrap').hidden=!ids.length;const L=$('#devList');L.textContent='';
+  for(const id of ids){
+    const d=devs[id],row=document.createElement('div');row.className='row';row.style.cssText='display:flex;align-items:center;gap:8px';
+    const nm=document.createElement('div');nm.style.flex='1';nm.textContent=icon(d.plat)+' '+d.name;
+    const b=document.createElement('button');b.textContent='Connect';b.style.cssText='width:auto;margin:0;padding:8px 14px';b.onclick=()=>connectDevice(id);
+    const x=document.createElement('button');x.className='g';x.textContent='✕';x.title='Forget this device';x.style.cssText='width:auto;margin:0;padding:8px 12px';
+    x.onclick=()=>{if(confirm('Forget '+d.name+'?')){delete devs[id];saveDevs();}};
+    row.append(nm,b,x);L.appendChild(row);
+  }
+}
+function gotHello(m){
+  const id=/^[0-9a-f]{32}$/.test(m.id)?m.id:'';
+  peerInfo={id,name:String(m.name||'Other device').slice(0,40),plat:String(m.plat||''),v:+m.v||1,paired:false};
+  const d=id&&devs[id];
+  if(d){d.name=peerInfo.name;d.plat=peerInfo.plat;d.last=Date.now();saveDevs();sendJ({t:'proof',key:d.key});}
+  else if(id&&myRole==='h'&&$('#remember').checked&&peerInfo.v>=2){
+    const key=randTok();devs[id]={name:peerInfo.name,plat:peerInfo.plat,key,last:Date.now()};saveDevs();sendJ({t:'pair',key});peerInfo.paired=true;
+  }
+  showPeer();
+}
+// quick-connect to a saved device (no QR / code)
+let lp=null,lpTimer=null;
+function startListening(){
+  stopListening();
+  if(!$('#recvOn').checked||typeof Peer==='undefined'||!Object.keys(devs).length)return;
+  const p=lp=new Peer('dtd-'+myId);
+  p.on('connection',handleDial);
+  p.on('disconnected',()=>{if(p===lp&&!p.destroyed){try{p.reconnect();}catch(e){}}});
+  p.on('error',e=>{if(p!==lp)return;clearTimeout(lpTimer);lpTimer=setTimeout(startListening,e.type==='unavailable-id'?5000:15000);});
+}
+function stopListening(){clearTimeout(lpTimer);try{lp&&lp.destroy();}catch(e){}lp=null;}
+function handleDial(c){
+  c.on('open',()=>{
+    const ch=c.dataChannel,reply=o=>{try{ch.send(JSON.stringify(o));}catch(e){}},no=why=>{reply({t:'no',why});setTimeout(()=>{try{c.close();}catch(e){}},400);};
+    ch.onmessage=ev=>{
+      let m;try{m=JSON.parse(ev.data);}catch(e){return;}
+      const d=m.t==='dial'&&devs[m.id];
+      if(!d||d.key!==m.key)return no('unknown');
+      if(dc&&dc.readyState==='open')return no('busy');
+      newSession('h');d.last=Date.now();saveDevs();reply({t:'ok'});onOpen(c);c.on('close',()=>onDcClose(c.dataChannel));
+    };
+  });
+}
+function connectDevice(id){
+  const d=devs[id];if(!d)return;
+  newSession('g');try{peer&&peer.destroy();}catch(e){}
+  status('connecting to '+d.name+'…');
+  const p=peer=new Peer();let finished=false;
+  const fail=t=>{if(finished)return;finished=true;status('not connected');alert(t);try{p.destroy();}catch(e){}};
+  const to=setTimeout(()=>fail(d.name+' did not answer. Make sure the app is open on it with Receiving on.'),20000);
+  p.on('open',()=>{
+    const c=p.connect('dtd-'+id,{reliable:true});
+    c.on('open',()=>{
+      const ch=c.dataChannel;
+      ch.onmessage=ev=>{let m;try{m=JSON.parse(ev.data);}catch(e){return;}
+        if(m.t==='ok'&&!finished){finished=true;clearTimeout(to);onOpen(c);c.on('close',()=>onDcClose(c.dataChannel));}
+        else if(m.t==='no'){clearTimeout(to);fail(m.why==='busy'?d.name+' is busy with another connection.':d.name+' did not recognise this device. Forget it and connect again with a QR or code.');}};
+      ch.send(JSON.stringify({t:'dial',id:myId,name:myName(),key:d.key}));
+    });
+    c.on('error',()=>{clearTimeout(to);fail('Could not connect to '+d.name+'.');});
+  });
+  p.on('error',e=>{clearTimeout(to);fail(e.type==='peer-unavailable'?d.name+' is not online. Open this app on it (with Receiving on) and try again.':'Could not reach the connection service ('+e.type+').');});
+}
+// accept / decline prompt (like AirDrop)
+function onOffer(m){
+  const accept=ok=>{if(ok)accepted={oid:m.oid};sendJ({t:ok?'accept':'decline',oid:m.oid});$('#prompt').hidden=true;};
+  if(!$('#recvOn').checked)return sendJ({t:'decline',oid:m.oid});
+  if($('#autoAcc').checked&&peerInfo&&peerInfo.paired)return accept(true);
+  if(!$('#prompt').hidden)return sendJ({t:'decline',oid:m.oid});
+  const who=peerInfo?peerInfo.name:'Another device',names=(Array.isArray(m.names)?m.names:[]).map(x=>String(x).slice(0,60));
+  $('#pTitle').textContent=who+' wants to send you '+(+m.n||1)+' item'+(m.n>1?'s':'');
+  $('#pBody').textContent=fmt(+m.size||0)+(names.length?' · '+names.join(', ')+(m.n>names.length?' …':''):'');
+  const th=$('#pThumb');th.textContent='';
+  if(typeof m.thumb==='string'&&m.thumb.startsWith('data:image/jpeg;base64,')&&m.thumb.length<40000){const im=document.createElement('img');im.src=m.thumb;im.style.cssText='max-width:120px;max-height:120px;border-radius:12px;margin-bottom:8px';th.appendChild(im);}
+  $('#pOk').onclick=()=>accept(true);$('#pNo').onclick=()=>accept(false);
+  $('#prompt').hidden=false;try{navigator.vibrate&&navigator.vibrate(150);}catch(e){}
+}
+async function thumbOf(f){
+  const bm=await createImageBitmap(f),sc=Math.min(1,96/Math.max(bm.width,bm.height));
+  const c=document.createElement('canvas');c.width=Math.max(1,Math.round(bm.width*sc));c.height=Math.max(1,Math.round(bm.height*sc));
+  c.getContext('2d').drawImage(bm,0,0,c.width,c.height);return c.toDataURL('image/jpeg',0.6);
+}
+async function askAccept(fs){
+  if(!peerInfo||peerInfo.v<2)return{ok:true,oid:null};
+  const oid=randTok().slice(0,16);let thumb='';
+  try{const im=fs.find(f=>/^image\/(jpeg|png|webp|heic|heif|gif)/i.test(f.type));if(im)thumb=await thumbOf(im);}catch(e){}
+  sendJ({t:'offer',oid,n:fs.length,size:fs.reduce((a,f)=>a+f.size,0),names:fs.slice(0,4).map(f=>f._p||f.webkitRelativePath||f.name),thumb});
+  note('Waiting for '+peerInfo.name+' to accept…');
+  const ans=await new Promise(res=>{pending[oid]=res;setTimeout(()=>{if(pending[oid]){delete pending[oid];res(null);}},120000);});
+  return{ok:ans===true,declined:ans===false,oid};
+}
+// ---- automatic reconnect (session token shared inside the encrypted channel; PeerJS only re-introduces the devices) ----
+let sess=null,myRole=null,userClosed=false,resuming=false,attemptId=0,rcTimer=null;
+function randTok(){return Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');}
+function saveSess(){try{localStorage.setItem('dt-sess',JSON.stringify({tok:sess.tok,role:sess.role,t:Date.now()}));}catch(e){}}
+function setSess(tok,role){sess={tok,role};myRole=role;saveSess();}
+function clearSess(){sess=null;try{localStorage.removeItem('dt-sess');}catch(e){}}
+function newSession(role){userClosed=false;resuming=false;attemptId++;clearTimeout(rcTimer);clearSess();myRole=role;warnMsg('');peerInfo=null;accepted=null;showPeer();}
+function warnMsg(t){const w=$('#warn');w.hidden=!t;w.textContent=t||'';}
+function dropped(){
+  if(!sess||userClosed||resuming)return;
+  setTimeout(()=>{if(sess&&!userClosed&&(!dc||dc.readyState!=='open'))resume();},1000);
+}
+function onDcClose(ch){
+  if(ch!==dc)return;
+  $('#prompt').hidden=true;for(const k in pending){pending[k](null);delete pending[k];}
+  if(rx){const r=rx;rx=null;r.row.firstChild.textContent=r.label+' — interrupted';if(r.disk)r.q=r.q.then(()=>r.w&&r.w.abort()).catch(()=>{});}
+  status('disconnected');dropped();
+}
+function resume(){
+  if(!sess||userClosed||resuming)return;
+  resuming=true;const my=++attemptId,t0=Date.now();let tries=0;
+  try{pc&&pc.close();}catch(e){}try{peer&&peer.destroy();}catch(e){}
+  status('reconnecting…');
+  const me='dtr-'+sess.tok+'-'+sess.role,other='dtr-'+sess.tok+'-'+(sess.role==='h'?'g':'h');
+  const retry=()=>{if(my!==attemptId||!resuming)return;clearTimeout(rcTimer);rcTimer=setTimeout(go,Math.min(2000+tries*1500,10000));};
+  const done=c=>{
+    if(my!==attemptId||!resuming){try{c.close();}catch(e){}return;}
+    resuming=false;clearTimeout(rcTimer);saveSess();onOpen(c);
+    c.on('close',()=>onDcClose(c.dataChannel));
+  };
+  const go=()=>{
+    if(my!==attemptId||!resuming)return;
+    if(Date.now()-t0>15*60*1000){resuming=false;status('disconnected');warnMsg('Could not reconnect. Tap Disconnect and connect again with QR or a code.');return;}
+    tries++;
+    warnMsg(navigator.onLine===false?'You are offline — will reconnect as soon as internet returns…':tries<4?'Connection lost — reconnecting automatically… (tap Disconnect to connect to a different device)':'Still trying to reconnect… The other device must be open and online too. Tap Disconnect to start over with QR or a code.');
+    try{peer&&peer.destroy();}catch(e){}
+    const p=peer=new Peer(me);
+    p.on('open',()=>{
+      if(my!==attemptId||p!==peer)return;
+      if(sess.role==='g'){const c=p.connect(other,{reliable:true});c.on('open',()=>done(c));c.on('error',retry);}
+    });
+    p.on('connection',c=>{c.on('open',()=>done(c));});
+    p.on('disconnected',()=>{if(my===attemptId&&p===peer&&!p.destroyed){try{p.reconnect();}catch(e){retry();}}});
+    p.on('error',()=>{if(p===peer)retry();});
+    if(sess.role==='g')setTimeout(()=>{if(my===attemptId&&resuming&&p===peer)retry();},12000);
+  };
+  go();
+}
+window.addEventListener('online',()=>{if(!lp)startListening();if(sess&&!userClosed&&(!dc||dc.readyState!=='open'))dropped();});
+function restoreSess(){
+  try{
+    const o=JSON.parse(localStorage.getItem('dt-sess')||'null');
+    if(o&&/^[0-9a-f]{32}$/.test(o.tok)&&(o.role==='h'||o.role==='g')&&Date.now()-o.t<6*3600e3){
+      sess={tok:o.tok,role:o.role};myRole=o.role;view('xfer');resume();return true;
+    }
+  }catch(e){}
+  return false;
+}
+renderDevs();
+(async()=>{try{db=await dbOpen();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}await loadSaved();}catch(e){}})();
+startListening();
+if(!restoreSess())view('home');
 </script>
 </body>
 </html>
