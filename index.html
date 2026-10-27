@@ -92,14 +92,18 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <b>Send files</b>
   <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="shrink"> Shrink photos before sending (faster, slightly lower quality)</label>
   <input type="file" id="pick" multiple hidden>
+  <input type="file" id="pickDir" webkitdirectory multiple hidden>
   <div style="display:flex;gap:8px">
     <button class="g pk" data-acc="image/*,video/*" style="flex:1;padding:10px 4px;font-size:14px">🖼 Photos &amp; videos</button>
     <button class="g pk" data-acc="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.amr,.aiff,.wma" style="flex:1;padding:10px 4px;font-size:14px">🎵 Audio</button>
     <button class="g pk" data-acc="" style="flex:1;padding:10px 4px;font-size:14px">📄 Any file</button>
+    <button class="g" id="bFolder" hidden style="flex:1;padding:10px 4px;font-size:14px">📁 Folder</button>
   </div>
-  <div class="m" style="margin-top:6px">On a computer you can also drag &amp; drop files onto this page.</div>
+  <div class="m" style="margin-top:6px">On a computer you can also drag &amp; drop files or whole folders onto this page. (Phone browsers can't pick folders — select multiple files instead.)</div>
   <div id="out"></div>
   <b style="display:block;margin-top:16px">Received</b>
+  <button class="g" id="bSaveDir" hidden>💾 Save received files straight to a folder</button>
+  <div id="saveDirInfo" class="m"></div>
   <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button></div>
   <div id="inbox" class="m">Nothing yet.</div>
   <label class="m" style="display:block;margin-top:12px"><input type="checkbox" id="bg" checked> Keep running when minimized (plays inaudible audio)</label>
@@ -235,30 +239,46 @@ const guessMime=n=>AUD[ext(n)]||'application/octet-stream';
 const isAudio=(n,t)=>/^audio\//.test(t||'')||!!AUD[ext(n)];
 function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
+let saveDir=null;
+const cleanPath=p=>String(p||'').replace(/\\/g,'/').split('/').filter(x=>x&&x!=='.'&&x!=='..');
+function finishRx(r,blob){
+  const it={name:r.path,blob,url:null,done:false,badge:document.createElement('div')};it.badge.className='m';
+  r.row.firstChild.textContent=r.label+' ✓ '+speed(r.got,performance.now()-r.t0);
+  const pr=r.row.querySelector('progress');
+  if(blob){
+    const url=URL.createObjectURL(blob);it.url=url;
+    const a=document.createElement('a');a.href=url;a.download=r.base;a.className='btn';a.textContent='Save '+r.base;pr.replaceWith(a);
+    it.badge.textContent='⏳ Not downloaded yet';r.row.appendChild(it.badge);
+    if(isAudio(r.base,blob.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=url;au.style.cssText='width:100%;margin-top:6px';r.row.appendChild(au);}
+    a.addEventListener('click',()=>markDl(it));
+  }else{pr.remove();it.done=true;it.badge.textContent='✓ Saved to your folder';it.badge.className='ok';r.row.appendChild(it.badge);}
+  received.push(it);stats.recvDone++;stats.recvBytes+=r.m.size;renderStats();
+}
 function onMsg(e){
   if(typeof e.data==='string'){
     const m=JSON.parse(e.data);
     if(m.t==='meta'){
+      const parts=cleanPath(m.path||m.name);if(!parts.length)parts.push('file');
+      const path=parts.join('/'),base=parts[parts.length-1];
+      const label=(isAudio(base,m.type)?'🎵 ':'⬇ ')+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+path+' ('+fmt(m.size)+')';
       const row=document.createElement('div');row.className='row';
-      row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';
-      row.firstChild.textContent=(isAudio(m.name,m.type)?'🎵 ':'⬇ ')+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')';
+      row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';row.firstChild.textContent=label;
       if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
-      $('#inbox').prepend(row);rx={m,parts:[],got:0,row,t0:performance.now(),lu:0,label:(isAudio(m.name,m.type)?'🎵 ':'⬇ ')+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')'};
+      $('#inbox').prepend(row);
+      const r=rx={m,path,base,parts:[],got:0,row,t0:performance.now(),lu:0,label,disk:!!saveDir,w:null,err:null,q:Promise.resolve()};
+      if(r.disk)r.q=(async()=>{let d=saveDir;for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
+        r.w=await(await d.getFileHandle(base,{create:true})).createWritable();})().catch(x=>{r.err=x;});
     }else if(m.t==='end'&&rx){
-      const mime=rx.m.type||guessMime(rx.m.name);
-      const blob=new Blob(rx.parts,{type:mime});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');a.href=url;a.download=rx.m.name;a.className='btn';a.textContent='Save '+rx.m.name;
-      rx.row.querySelector('progress').replaceWith(a);
-      rx.row.firstChild.textContent=rx.label+' ✓ '+speed(rx.got,performance.now()-rx.t0);
-      const it={name:rx.m.name,blob,url,done:false,badge:document.createElement('div')};it.badge.className='m';it.badge.textContent='⏳ Not downloaded yet';rx.row.appendChild(it.badge);
-      if(isAudio(rx.m.name,mime)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=url;au.style.cssText='width:100%;margin-top:6px';rx.row.appendChild(au);}
-      a.addEventListener('click',()=>markDl(it));received.push(it);stats.recvDone++;stats.recvBytes+=rx.m.size;renderStats();rx=null;
+      const r=rx;rx=null;
+      if(r.disk)r.q=r.q.then(()=>r.w&&r.w.close()).then(()=>{if(r.err||!r.w)throw 1;finishRx(r,null);})
+        .catch(()=>{r.row.firstChild.textContent=r.label+' — could not save to folder';stats.failed++;renderStats();});
+      else finishRx(r,new Blob(r.parts,{type:r.m.type||guessMime(r.base)}));
     }
   }else if(rx){
-    rx.parts.push(e.data);rx.got+=e.data.byteLength;
+    const r=rx,d=e.data;r.got+=d.byteLength;
+    if(r.disk)r.q=r.q.then(()=>r.w&&r.w.write(d));else r.parts.push(d);
     const n=performance.now();
-    if(n-rx.lu>250){rx.lu=n;rx.row.querySelector('progress').value=rx.got;rx.row.firstChild.textContent=rx.label+' · '+speed(rx.got,n-rx.t0)+left(rx.got,rx.m.size,n-rx.t0);}
+    if(n-r.lu>250){r.lu=n;r.row.querySelector('progress').value=r.got;r.row.firstChild.textContent=r.label+' · '+speed(r.got,n-r.t0)+left(r.got,r.m.size,n-r.t0);}
   }
 }
 document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{const p=$('#pick');if(b.dataset.acc)p.setAttribute('accept',b.dataset.acc);else p.removeAttribute('accept');p.click();});
@@ -271,14 +291,29 @@ $('#pick').onchange=e=>{const fs=[...e.target.files];e.target.value='';sendFiles
 const dz=$('#xfer');
 ['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('drag');}));
 ['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('drag');}));
-dz.addEventListener('drop',e=>{const fs=[...(e.dataTransfer?e.dataTransfer.files:[])];if(fs.length)sendFiles(fs);});
+dz.addEventListener('drop',async e=>{
+  const ents=[...(e.dataTransfer&&e.dataTransfer.items||[])].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
+  let fs=[];
+  if(ents.length){for(const en of ents)await walk(en,'',fs);}else fs=[...(e.dataTransfer?e.dataTransfer.files:[])];
+  if(fs.length)sendFiles(fs);
+});
+async function walk(en,pre,out){
+  if(en.isFile){const f=await new Promise((a,b)=>en.file(a,b));if(pre)f._p=pre+en.name;out.push(f);}
+  else if(en.isDirectory){const rd=en.createReader();let all=[],b;
+    do{b=await new Promise((a,c)=>rd.readEntries(a,c));all=all.concat(b);}while(b.length);
+    for(const c of all)await walk(c,pre+en.name+'/',out);}
+}
+if(matchMedia('(hover:hover) and (pointer:fine)').matches)$('#bFolder').hidden=false;
+$('#bFolder').onclick=()=>$('#pickDir').click();
+$('#pickDir').onchange=e=>{const fs=[...e.target.files];e.target.value='';sendFiles(fs);};
 async function send(f,i,n){
   const row=document.createElement('div');row.className='row';
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
-  const label=(isAudio(f.name,f.type)?'🎵⬆ ':'⬆ ')+(n>1?'['+i+'/'+n+'] ':'')+f.name+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
+  const pth=f._p||f.webkitRelativePath||f.name;
+  const label=(isAudio(f.name,f.type)?'🎵⬆ ':'⬆ ')+(n>1?'['+i+'/'+n+'] ':'')+pth+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
   const fail=()=>{row.firstChild.textContent=label+' — failed';stats.failed++;renderStats();};
   if(!dc||dc.readyState!=='open')return fail();
-  dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,i,n}));
+  dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,path:pth,i,n}));
   const mm=(pc&&pc.sctp&&pc.sctp.maxMessageSize)||65536,CH=Math.max(16384,Math.min(131072,mm));
   const t0=performance.now();
   for(let o=0;o<f.size;o+=BLOCK){
@@ -366,18 +401,18 @@ function renderStats(){
     +'<br>⬇ Received <b>'+stats.recvDone+'</b> files ('+fmt(stats.recvBytes)+')'
     +'<br>💾 Downloaded <b>'+dl+'</b> · ⏳ Waiting to download <b>'+(received.length-dl)+'</b>';
   $('#dlbar').hidden=!received.length;
-  $('#dlAll').textContent=wait?'Download remaining ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;$('#dlZip').textContent='Download all '+received.length+' as ZIP';
+  $('#dlAll').textContent=wait?'Download remaining ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;const nb=received.filter(f=>f.blob).length;$('#dlZip').hidden=!nb;$('#dlZip').textContent='Download all '+nb+' as ZIP (keeps folders)';
 }
 function markDl(it){it.done=true;it.badge.textContent='✓ Downloaded';it.badge.className='ok';renderStats();}
 function uniqueNames(){const seen={};return received.map(f=>{const k=f.name;if(!seen[k]){seen[k]=1;return k;}
-  const d=k.lastIndexOf('.'),b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
+  const sl=k.lastIndexOf('/'),dd=k.lastIndexOf('.'),d=dd>sl+1?dd:-1,b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
 function saveBlobUrl(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
-$('#dlAll').onclick=async()=>{const nm=uniqueNames();for(let i=0;i<received.length;i++){if(received[i].done)continue;saveBlobUrl(received[i].url,nm[i]);markDl(received[i]);await new Promise(r=>setTimeout(r,700));}};
+$('#dlAll').onclick=async()=>{const nm=uniqueNames();for(let i=0;i<received.length;i++){if(received[i].done)continue;saveBlobUrl(received[i].url,nm[i].split('/').pop());markDl(received[i]);await new Promise(r=>setTimeout(r,700));}};
 $('#dlZip').onclick=async()=>{
-  const total=received.reduce((a,f)=>a+f.blob.size,0);
+  const total=received.reduce((a,f)=>a+(f.blob?f.blob.size:0),0);
   if(total>1.5e9)return alert('Too large for one ZIP (over 1.5 GB). Use Download all instead.');
-  const nm=uniqueNames(),b=await makeZip(received.map((f,i)=>({name:nm[i],blob:f.blob})));
-  const u=URL.createObjectURL(b);saveBlobUrl(u,'transfer-'+new Date().toISOString().slice(0,10)+'.zip');received.forEach(markDl);setTimeout(()=>URL.revokeObjectURL(u),60000);
+  const nm=uniqueNames(),b=await makeZip(received.map((f,i)=>({name:nm[i],blob:f.blob})).filter(x=>x.blob));
+  const u=URL.createObjectURL(b);saveBlobUrl(u,'transfer-'+new Date().toISOString().slice(0,10)+'.zip');received.forEach(f=>{if(f.blob)markDl(f);});setTimeout(()=>URL.revokeObjectURL(u),60000);
 };
 const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
 function crc32(u){let c=-1;for(let i=0;i<u.length;i++)c=CRC[(c^u[i])&255]^(c>>>8);return (c^-1)>>>0;}
@@ -420,9 +455,11 @@ async function shrink(f){
     c.getContext('2d').drawImage(bm,0,0,c.width,c.height);
     const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.85));
     if(!b||b.size>=f.size)return f;
-    return new File([b],f.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});
+    const nf=new File([b],f.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});const p0=f._p||f.webkitRelativePath;if(p0)nf._p=p0.replace(/[^/]*$/,nf.name);return nf;
   }catch(e){return f;}
 }
+if(window.showDirectoryPicker)$('#bSaveDir').hidden=false;
+$('#bSaveDir').onclick=async()=>{try{saveDir=await showDirectoryPicker({mode:'readwrite'});$('#saveDirInfo').textContent='New files are saved to "'+saveDir.name+'" with their folder structure. Large files are written directly to disk.';}catch(e){}};
 view('home');
 </script>
 </body>
