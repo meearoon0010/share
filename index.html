@@ -24,6 +24,8 @@ video{width:100%;border-radius:10px;background:#000}
 .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:13px;background:var(--bg);border:1px solid var(--bd)}
 .ok{color:var(--ok)}.row{padding:10px 0;border-top:1px solid var(--bd)}.row:first-child{border-top:0}
 progress{width:100%;height:8px}.m{color:var(--mu);font-size:13px}[hidden]{display:none!important}
+@media(min-width:800px){main{max-width:640px}}
+.drag{outline:2px dashed var(--ac);outline-offset:4px}
 ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 </style>
 </head>
@@ -34,7 +36,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 <div style="margin-bottom:12px">Status: <span class="pill" id="st">not connected</span></div>
 
 <section id="home" class="card">
-  <b>Connect two devices</b>
+  <b>Connect two devices</b> <span class="m">(phone ↔ phone, phone ↔ PC, iPhone ↔ Android)</span>
   <ol><li>Open this page on both devices (same Wi-Fi works best).</li><li>One taps <i>Start</i>, the other taps <i>Join</i>.</li><li>Scan each other's QR code, once each way.</li></ol>
   <button id="bStart">Start (show my QR first)</button>
   <button class="g" id="bJoin">Join (scan the other device)</button>
@@ -90,7 +92,12 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <b>Send files</b>
   <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="shrink"> Shrink photos before sending (faster, slightly lower quality)</label>
   <input type="file" id="pick" multiple hidden>
-  <button id="bPick">Choose files to send</button>
+  <div style="display:flex;gap:8px">
+    <button class="g pk" data-acc="image/*,video/*" style="flex:1;padding:10px 4px;font-size:14px">🖼 Photos &amp; videos</button>
+    <button class="g pk" data-acc="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.amr,.aiff,.wma" style="flex:1;padding:10px 4px;font-size:14px">🎵 Audio</button>
+    <button class="g pk" data-acc="" style="flex:1;padding:10px 4px;font-size:14px">📄 Any file</button>
+  </div>
+  <div class="m" style="margin-top:6px">On a computer you can also drag &amp; drop files onto this page.</div>
   <div id="out"></div>
   <b style="display:block;margin-top:16px">Received</b>
   <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button></div>
@@ -222,6 +229,10 @@ function wire(ch){
   dc.onclose=()=>status('disconnected');
 }
 function left(d,t,ms){if(!d||ms<1000)return'';const s=Math.round((t-d)/(d/ms)/1000);return ' · '+(s>=60?Math.floor(s/60)+'m '+s%60+'s':s+'s')+' left';}
+const AUD={mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav',flac:'audio/flac',ogg:'audio/ogg',opus:'audio/ogg',amr:'audio/amr',aif:'audio/aiff',aiff:'audio/aiff',wma:'audio/x-ms-wma'};
+const ext=n=>(n.split('.').pop()||'').toLowerCase();
+const guessMime=n=>AUD[ext(n)]||'application/octet-stream';
+const isAudio=(n,t)=>/^audio\//.test(t||'')||!!AUD[ext(n)];
 function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
 function onMsg(e){
@@ -230,16 +241,18 @@ function onMsg(e){
     if(m.t==='meta'){
       const row=document.createElement('div');row.className='row';
       row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';
-      row.firstChild.textContent='⬇ '+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')';
+      row.firstChild.textContent=(isAudio(m.name,m.type)?'🎵 ':'⬇ ')+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')';
       if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
-      $('#inbox').prepend(row);rx={m,parts:[],got:0,row,t0:performance.now(),lu:0,label:'⬇ '+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')'};
+      $('#inbox').prepend(row);rx={m,parts:[],got:0,row,t0:performance.now(),lu:0,label:(isAudio(m.name,m.type)?'🎵 ':'⬇ ')+(m.n>1?'['+m.i+'/'+m.n+'] ':'')+m.name+' ('+fmt(m.size)+')'};
     }else if(m.t==='end'&&rx){
-      const blob=new Blob(rx.parts,{type:rx.m.type||'application/octet-stream'});
+      const mime=rx.m.type||guessMime(rx.m.name);
+      const blob=new Blob(rx.parts,{type:mime});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');a.href=url;a.download=rx.m.name;a.className='btn';a.textContent='Save '+rx.m.name;
       rx.row.querySelector('progress').replaceWith(a);
       rx.row.firstChild.textContent=rx.label+' ✓ '+speed(rx.got,performance.now()-rx.t0);
       const it={name:rx.m.name,blob,url,done:false,badge:document.createElement('div')};it.badge.className='m';it.badge.textContent='⏳ Not downloaded yet';rx.row.appendChild(it.badge);
+      if(isAudio(rx.m.name,mime)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=url;au.style.cssText='width:100%;margin-top:6px';rx.row.appendChild(au);}
       a.addEventListener('click',()=>markDl(it));received.push(it);stats.recvDone++;stats.recvBytes+=rx.m.size;renderStats();rx=null;
     }
   }else if(rx){
@@ -248,12 +261,21 @@ function onMsg(e){
     if(n-rx.lu>250){rx.lu=n;rx.row.querySelector('progress').value=rx.got;rx.row.firstChild.textContent=rx.label+' · '+speed(rx.got,n-rx.t0)+left(rx.got,rx.m.size,n-rx.t0);}
   }
 }
-$('#bPick').onclick=()=>$('#pick').click();
-$('#pick').onchange=async e=>{const fs=[...e.target.files];e.target.value='';stats.sentTotal+=fs.length;renderStats();let i=0;for(const f0 of fs){const f=await shrink(f0);await send(f,++i,fs.length);}};
+document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{const p=$('#pick');if(b.dataset.acc)p.setAttribute('accept',b.dataset.acc);else p.removeAttribute('accept');p.click();});
+async function sendFiles(fs){
+  if(!dc||dc.readyState!=='open')return alert('Not connected.');
+  stats.sentTotal+=fs.length;renderStats();let i=0;
+  for(const f0 of fs){const f=await shrink(f0);await send(f,++i,fs.length);}
+}
+$('#pick').onchange=e=>{const fs=[...e.target.files];e.target.value='';sendFiles(fs);};
+const dz=$('#xfer');
+['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('drag');}));
+['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('drag');}));
+dz.addEventListener('drop',e=>{const fs=[...(e.dataTransfer?e.dataTransfer.files:[])];if(fs.length)sendFiles(fs);});
 async function send(f,i,n){
   const row=document.createElement('div');row.className='row';
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
-  const label='⬆ '+(n>1?'['+i+'/'+n+'] ':'')+f.name+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
+  const label=(isAudio(f.name,f.type)?'🎵⬆ ':'⬆ ')+(n>1?'['+i+'/'+n+'] ':'')+f.name+' ('+fmt(f.size)+')';row.firstChild.textContent=label;$('#out').prepend(row);
   const fail=()=>{row.firstChild.textContent=label+' — failed';stats.failed++;renderStats();};
   if(!dc||dc.readyState!=='open')return fail();
   dc.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,i,n}));
