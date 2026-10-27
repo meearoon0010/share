@@ -99,7 +99,8 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
     <button class="g pk" data-acc="" style="flex:1;padding:10px 4px;font-size:14px">📄 Any file</button>
     <button class="g" id="bFolder" hidden style="flex:1;padding:10px 4px;font-size:14px">📁 Folder</button>
   </div>
-  <div class="m" style="margin-top:6px">On a computer you can also drag &amp; drop files or whole folders onto this page. (Phone browsers can't pick folders — select multiple files instead.)</div>
+  <div class="m" style="margin-top:6px">On a computer you can also drag &amp; drop files or whole folders onto this page. (Phones: folder picking needs iOS 18.4+ or Chrome 132+ on Android.)</div>
+  <div id="fnote" class="m" style="margin-top:4px"></div>
   <div id="out"></div>
   <b style="display:block;margin-top:16px">Received</b>
   <button class="g" id="bSaveDir" hidden>💾 Save received files straight to a folder</button>
@@ -282,16 +283,28 @@ function onMsg(e){
   }
 }
 document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{const p=$('#pick');if(b.dataset.acc)p.setAttribute('accept',b.dataset.acc);else p.removeAttribute('accept');p.click();});
-async function sendFiles(fs){
-  if(!dc||dc.readyState!=='open')return alert('Not connected.');
-  stats.sentTotal+=fs.length;renderStats();let i=0;
-  for(const f0 of fs){const f=await shrink(f0);await send(f,++i,fs.length);}
+let curWarn='';
+const note=t=>{$('#fnote').textContent=t+(curWarn?' ⚠ '+curWarn:'');};
+async function sendFiles(fs,warn){
+  curWarn=warn||'';
+  if(!dc||dc.readyState!=='open'){note('Not connected — connect the two devices first.');return;}
+  stats.sentTotal+=fs.length;renderStats();
+  const ok0=stats.sentDone,bad0=stats.failed;
+  for(let k=0;k<fs.length;k++){
+    const f0=fs[k];note('Sending '+(k+1)+' of '+fs.length+': '+(f0._p||f0.webkitRelativePath||f0.name));
+    try{const f=await shrink(f0);await send(f,k+1,fs.length);}
+    catch(err){stats.failed+=fs.length-k;renderStats();note('Stopped: '+((err&&err.message)||err)+'. '+(fs.length-k)+' file(s) not sent — check the connection and try again.');return;}
+  }
+  note('Done: '+(stats.sentDone-ok0)+' of '+fs.length+' files sent'+(stats.failed>bad0?' ('+(stats.failed-bad0)+' failed)':'')+'.');
 }
+window.addEventListener('unhandledrejection',e=>note('Error: '+((e.reason&&e.reason.message)||e.reason)));
+window.addEventListener('error',e=>note('Error: '+e.message));
 $('#pick').onchange=e=>{const fs=[...e.target.files];e.target.value='';sendFiles(fs);};
-const dz=$('#xfer');
-['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('drag');}));
-['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('drag');}));
+const dz=document,dzc=$('#xfer').classList;
+['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dzc.add('drag');}));
+['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dzc.remove('drag');}));
 dz.addEventListener('drop',async e=>{
+  if($('#xfer').hidden){alert('Connect the two devices first, then drop your files or folders.');return;}
   const ents=[...(e.dataTransfer&&e.dataTransfer.items||[])].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
   let fs=[];
   if(ents.length){for(const en of ents)await walk(en,'',fs);}else fs=[...(e.dataTransfer?e.dataTransfer.files:[])];
@@ -303,9 +316,14 @@ async function walk(en,pre,out){
     do{b=await new Promise((a,c)=>rd.readEntries(a,c));all=all.concat(b);}while(b.length);
     for(const c of all)await walk(c,pre+en.name+'/',out);}
 }
-if(matchMedia('(hover:hover) and (pointer:fine)').matches)$('#bFolder').hidden=false;
+if('webkitdirectory' in HTMLInputElement.prototype)$('#bFolder').hidden=false;
 $('#bFolder').onclick=()=>$('#pickDir').click();
-$('#pickDir').onchange=e=>{const fs=[...e.target.files];e.target.value='';sendFiles(fs);};
+$('#pickDir').onchange=e=>{
+  const fs=[...e.target.files];e.target.value='';
+  if(!fs.length){note('No files found in that folder.');return;}
+  const withPath=fs.filter(f=>f.webkitRelativePath).length;
+  sendFiles(fs,withPath===fs.length?'':'this browser gave no folder paths, so files are sent without their folders (iPhone needs iOS 18.4+, Android Chrome 132+).');
+};
 async function send(f,i,n){
   const row=document.createElement('div');row.className='row';
   row.innerHTML='<div></div><progress max="'+f.size+'" value="0"></progress>';
