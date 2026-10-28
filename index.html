@@ -57,7 +57,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 
 <section id="host" class="card" hidden>
   <b>Step 1 · Let the other device scan this</b>
-  <div id="qr"></div><div class="m" id="qrmsg"></div>
+  <div id="qr"></div><div class="m" id="qrmsg"></div><div class="m" id="qrinfo"></div>
   <textarea id="hOffer" readonly></textarea>
   <button class="g" data-copy="hOffer">Copy code</button>
   <b style="display:block;margin-top:14px">Step 2 · Scan its reply</b>
@@ -75,7 +75,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <button class="g toCode">QR not working? Use a short code</button>
   <div id="jOut" hidden>
     <b style="display:block;margin-top:14px">Step 2 · Show this to the first device</b>
-    <div id="qr2"></div><div class="m" id="qrmsg2"></div>
+    <div id="qr2"></div><div class="m" id="qrmsg2"></div><div class="m" id="qrinfo2"></div>
     <textarea id="jAns" readonly></textarea>
     <button class="g" data-copy="jAns">Copy reply code</button>
   </div>
@@ -120,7 +120,9 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <button class="g" id="bSaveDir" hidden>💾 Save received files straight to a folder</button>
   <div id="saveDirInfo" class="m"></div>
   <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button>
+    <button class="g" id="dlShare" hidden>📤 Save all to Files / share…</button><button class="g" id="dlDir" hidden>📁 Save all into a folder…</button>
     <button class="g" id="dlDel">🗑 Delete files I've downloaded</button><button class="g" id="dlClr">🗑 Delete everything received</button></div>
+  <div id="folders"></div>
   <div id="inbox" class="m">Nothing yet.</div>
   </div></div>
   <label class="m" style="display:block;margin-top:12px"><input type="checkbox" id="bg" checked> Keep running when minimized (plays inaudible audio)</label>
@@ -200,12 +202,31 @@ function mk(){
   watchPc(pc);
   pc.ondatachannel=e=>wire(e.channel);
 }
-let dTimer=null;
+let dTimer=null,slowT=null,unlockStream=null;
+// Browsers hide real local IP addresses (mDNS) until camera/mic permission is granted — which breaks Wi-Fi connections on many routers.
+async function unlockIPs(){
+  stopUnlock();
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return;
+  const ask=c=>Promise.race([navigator.mediaDevices.getUserMedia(c),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),20000))]);
+  try{unlockStream=await ask({video:true});}catch(e){try{unlockStream=await ask({audio:true});}catch(e2){}}
+}
+function stopUnlock(){if(unlockStream){try{unlockStream.getTracks().forEach(t=>t.stop());}catch(e){}unlockStream=null;}}
+function candMsg(d){
+  let host=0,mdns=0,pub=0;
+  for(const x of (d.c||[])){const t=(x.match(/ typ (\w+)/)||[])[1];if(t==='host'){host++;if(/\.local \d+ typ/.test(x))mdns++;}else if(t==='srflx')pub++;}
+  const real=host-mdns;
+  let t='Network addresses found: '+real+' local'+(mdns?', '+mdns+' hidden':'')+', '+pub+' public.';
+  if(!real)t+=' ⚠ No usable local address — on Wi-Fi this can stop devices finding each other. Allow camera access and try again, or use the short code or a hotspot.';
+  return t;
+}
 function watchPc(me){
   me.onconnectionstatechange=()=>{
     if(me!==pc)return;
     const s=me.connectionState;status(s==='connected'?'connected':s);
-    if(s==='connected'){clearTimeout(dTimer);view('xfer');}
+    if(s==='connecting'){clearTimeout(slowT);slowT=setTimeout(()=>{if(me===pc&&me.connectionState!=='connected'){
+      const t='Still connecting… Your Wi-Fi may block device-to-device traffic (guest network / AP isolation). Try the short code, or use a phone hotspot.';
+      $('#qrinfo').textContent=t;$('#qrinfo2').textContent=t;status('connecting is slow');}},25000);}
+    if(s==='connected'){clearTimeout(dTimer);clearTimeout(slowT);stopUnlock();view('xfer');}
     if(s==='disconnected'){clearTimeout(dTimer);dTimer=setTimeout(()=>{if(me===pc&&me.connectionState!=='connected')dropped();},8000);}
     if(s==='failed'||s==='closed')dropped();
   };
@@ -217,16 +238,16 @@ const gathered=()=>new Promise(r=>{
 });
 
 $('#bStart').onclick=async()=>{
-  newSession('h');mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
+  newSession('h');await unlockIPs();mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
   await pc.setLocalDescription(await pc.createOffer());await gathered();
-  const c=await pack(compact(pc.localDescription));
-  $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);status('waiting for reply');
+  const cd=compact(pc.localDescription),c=await pack(cd);
+  $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);$('#qrinfo').textContent=candMsg(cd);status('waiting for reply');
 };
 $('#hScan').onclick=()=>scan(c=>applyAnswer(c));
 $('#hApply').onclick=()=>applyAnswer($('#hAns').value);
 async function applyAnswer(c){try{await pc.setRemoteDescription(expand(await unpack(c)));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
 
-$('#bJoin').onclick=()=>{newSession('g');mk();view('join');};
+$('#bJoin').onclick=async()=>{newSession('g');await unlockIPs();mk();view('join');};
 $('#jScan').onclick=()=>scan(c=>makeAnswer(c));
 $('#jApply').onclick=()=>makeAnswer($('#jOffer').value);
 async function makeAnswer(c){
@@ -234,8 +255,8 @@ async function makeAnswer(c){
   try{
     await pc.setRemoteDescription(expand(await unpack(c)));
     await pc.setLocalDescription(await pc.createAnswer());status('creating reply…');await gathered();
-    const a=await pack(compact(pc.localDescription));
-    $('#jOut').hidden=false;$('#jAns').value=a;drawQR($('#qr2'),$('#qrmsg2'),a);status('show reply to other device');
+    const cd=compact(pc.localDescription),a=await pack(cd);
+    $('#jOut').hidden=false;$('#jAns').value=a;drawQR($('#qr2'),$('#qrmsg2'),a);$('#qrinfo2').textContent=candMsg(cd);status('show reply to other device');
   }catch(e){alert('Invalid code. Try again.');}
 }
 
@@ -468,10 +489,10 @@ document.addEventListener('click',e=>{
 let peer;
 const AL='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(6)),x=>AL[x%AL.length]).join('');
-function endPc(){try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}stopCam();}
+function endPc(){stopUnlock();try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}stopCam();}
 function onOpen(c){
   pc=c.peerConnection;watchPc(pc);const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;
-  status('connected');view('xfer');warnMsg('');setTimeout(pathInfo,1500);
+  stopUnlock();status('connected');view('xfer');warnMsg('');setTimeout(pathInfo,1500);
 }
 function useConn(c){
   c.on('open',()=>onOpen(c));
@@ -486,11 +507,11 @@ function hostCode(){
 }
 document.querySelectorAll('.toCode').forEach(b=>b.onclick=()=>{endPc();status('not connected');view('code');});
 $('#cBack').onclick=()=>{endPc();$('#cShowBox').hidden=true;status('not connected');view('home');};
-$('#cShow').onclick=()=>{newSession('h');endPc();$('#cShowBox').hidden=false;$('#myCode').textContent='…';hostCode();};
-$('#cGo').onclick=()=>{
+$('#cShow').onclick=async()=>{newSession('h');endPc();await unlockIPs();$('#cShowBox').hidden=false;$('#myCode').textContent='…';hostCode();};
+$('#cGo').onclick=async()=>{
   const code=$('#cIn').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(code.length!==6)return alert('Enter the 6-character code.');
-  newSession('g');endPc();status('connecting…');peer=new Peer();
+  newSession('g');endPc();status('connecting…');await unlockIPs();peer=new Peer();
   peer.on('open',()=>{useConn(peer.connect('dt-'+code,{reliable:true}));
     setTimeout(()=>{if($('#st').textContent==='connecting…')status('not connected');},15000);});
   peer.on('error',e=>{status('not connected');alert(e.type==='peer-unavailable'?'Code not found. Check it and try again.':'Could not connect ('+e.type+').');});
@@ -533,33 +554,88 @@ function renderStats(){
     +'<br>⬇ Received <b>'+stats.recvDone+'</b> files ('+fmt(stats.recvBytes)+')'
     +'<br>💾 Downloaded <b>'+dl+'</b> · ⏳ Waiting to download <b>'+(received.length-dl)+'</b>';
   $('#dlbar').hidden=!received.length;$('#bLib').textContent='📥 Received files ('+received.length+')';
-  $('#dlAll').textContent=wait?'Download remaining ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;const nb=received.filter(f=>f.blob).length;$('#dlZip').hidden=!nb;$('#dlZip').textContent='Download all '+nb+' as ZIP (keeps folders)';
+  $('#dlAll').textContent=wait?'Download one by one ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;const nb=received.filter(f=>f.blob).length;$('#dlZip').hidden=!nb;if(!zipBusy)$('#dlZip').textContent='Download all '+nb+' as ZIP (keeps folders)';
+  $('#dlShare').hidden=!(nb&&canShareFiles());$('#dlDir').hidden=!(nb&&!!window.showDirectoryPicker);renderFolders();
+}
+// ---- saving: ZIP, share sheet ("Save to Files"), or straight into a chosen folder ----
+var zipBusy=false;
+const mkBtn=(t,fn)=>{const b=document.createElement('button');b.className='g';b.textContent=t;b.style.cssText='padding:8px;font-size:14px;margin-top:6px';b.onclick=fn;return b;};
+function canShareFiles(){try{const t=new File(['a'],'a.txt',{type:'text/plain'});return !!(navigator.share&&navigator.canShare&&navigator.canShare({files:[t]}));}catch(e){return false;}}
+async function zipDownload(list,fname,btn){
+  const items=list.filter(f=>f.blob);if(!items.length||zipBusy)return;
+  if(items.reduce((a,f)=>a+f.size,0)>3.5e9)return alert('Too large for one ZIP (over 3.5 GB). Use "Save into a folder" or the Files option instead.');
+  zipBusy=true;const old=btn.textContent;btn.disabled=true;
+  try{
+    const all=uniqueNames(),map=new Map(received.map((f,i)=>[f,all[i]]));
+    const b=await makeZip(items.map(f=>({name:map.get(f)||f.name,blob:f.blob})),p=>{btn.textContent='Zipping… '+Math.round(p*100)+'%';});
+    const u=URL.createObjectURL(b);saveBlobUrl(u,fname);items.forEach(markDl);setTimeout(()=>URL.revokeObjectURL(u),120000);
+  }catch(e){alert('Could not create the ZIP: '+((e&&e.message)||e)+'. Try saving into a folder or Files instead.');}
+  finally{zipBusy=false;btn.disabled=false;btn.textContent=old;renderStats();}
+}
+async function shareFiles(list){
+  const files=list.filter(f=>f.blob).map(f=>new File([f.blob],f.base,{type:f.blob.type||'application/octet-stream'}));
+  if(!files.length)return;
+  try{
+    if(!(navigator.canShare&&navigator.canShare({files})))return alert('This browser cannot share this many or this large files at once. Use ZIP instead.');
+    await navigator.share({files});list.forEach(f=>{if(f.blob)markDl(f);});
+  }catch(e){if(!e||e.name!=='AbortError')alert('Could not open the share sheet: '+((e&&e.message)||e));}
+}
+async function saveToDir(list){
+  const items=list.filter(f=>f.blob);if(!items.length)return;
+  let root;try{root=await showDirectoryPicker({mode:'readwrite'});}catch(e){return;}
+  let n=0;
+  try{
+    for(const it of items){
+      const parts=cleanPath(it.name);let d=root;
+      for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
+      const w=await(await d.getFileHandle(parts[parts.length-1],{create:true})).createWritable();await w.write(it.blob);await w.close();markDl(it);n++;
+    }
+    alert('Saved '+n+' file(s) into "'+root.name+'".');
+  }catch(e){alert('Saved '+n+' of '+items.length+' files. Error: '+((e&&e.message)||e));}
+}
+function renderFolders(){
+  if(zipBusy)return;
+  const g={};
+  for(const f of received){const i=f.name.indexOf('/');if(i>0&&f.blob){const k=f.name.slice(0,i);(g[k]=g[k]||[]).push(f);}}
+  const box=$('#folders');box.textContent='';
+  for(const k of Object.keys(g)){
+    const L=g[k],row=document.createElement('div');row.className='row';
+    const t=document.createElement('div');t.style.fontWeight='600';t.textContent='📁 '+k+' — '+L.length+' files · '+fmt(L.reduce((a,f)=>a+f.size,0));row.appendChild(t);
+    const z=mkBtn('Download folder as ZIP',()=>zipDownload(L,k+'.zip',z));row.appendChild(z);
+    if(canShareFiles())row.appendChild(mkBtn('Save folder to Files…',()=>shareFiles(L)));
+    if(window.showDirectoryPicker)row.appendChild(mkBtn('Save folder into a folder…',()=>saveToDir(L)));
+    box.appendChild(row);
+  }
 }
 function markDl(it){it.done=true;it.badge.textContent='✓ Downloaded';it.badge.className='ok';dbMeta(it);renderStats();}
 function uniqueNames(){const seen={};return received.map(f=>{const k=f.name;if(!seen[k]){seen[k]=1;return k;}
   const sl=k.lastIndexOf('/'),dd=k.lastIndexOf('.'),d=dd>sl+1?dd:-1,b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
 function saveBlobUrl(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
 $('#dlAll').onclick=async()=>{const nm=uniqueNames();for(let i=0;i<received.length;i++){if(received[i].done)continue;saveBlobUrl(received[i].url,nm[i].split('/').pop());markDl(received[i]);await new Promise(r=>setTimeout(r,700));}};
-$('#dlZip').onclick=async()=>{
-  const total=received.reduce((a,f)=>a+(f.blob?f.blob.size:0),0);
-  if(total>1.5e9)return alert('Too large for one ZIP (over 1.5 GB). Use Download all instead.');
-  const nm=uniqueNames(),b=await makeZip(received.map((f,i)=>({name:nm[i],blob:f.blob})).filter(x=>x.blob));
-  const u=URL.createObjectURL(b);saveBlobUrl(u,'transfer-'+new Date().toISOString().slice(0,10)+'.zip');received.forEach(f=>{if(f.blob)markDl(f);});setTimeout(()=>URL.revokeObjectURL(u),60000);
-};
+$('#dlZip').onclick=()=>zipDownload(received,'transfer-'+new Date().toISOString().slice(0,10)+'.zip',$('#dlZip'));
+$('#dlShare').onclick=()=>shareFiles(received);
+$('#dlDir').onclick=()=>saveToDir(received);
 const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
-function crc32(u){let c=-1;for(let i=0;i<u.length;i++)c=CRC[(c^u[i])&255]^(c>>>8);return (c^-1)>>>0;}
-async function makeZip(files){
-  const enc=new TextEncoder(),parts=[],cen=[];let off=0;
+function crcUpdate(c,u){for(let i=0;i<u.length;i++)c=CRC[(c^u[i])&255]^(c>>>8);return c;}
+async function makeZip(files,onProg){
+  const enc=new TextEncoder(),parts=[],cen=[],STEP=4*1024*1024;let off=0,done=0;
+  const total=files.reduce((a,f)=>a+f.blob.size,0)||1;
   for(const f of files){
-    const data=new Uint8Array(await f.blob.arrayBuffer()),name=enc.encode(f.name),crc=crc32(data);
+    const size=f.blob.size,name=enc.encode(f.name);let c=-1;
+    for(let o=0;o<size;o+=STEP){                       // CRC in slices, yielding so the page (and the connection) stay responsive
+      const u=new Uint8Array(await f.blob.slice(o,o+STEP).arrayBuffer());c=crcUpdate(c,u);done+=u.length;
+      if(onProg)onProg(done/total);
+      await new Promise(r=>setTimeout(r,0));
+    }
+    const crc=(c^-1)>>>0;
     const h=new DataView(new ArrayBuffer(30));
     h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(12,0x21,true);
-    h.setUint32(14,crc,true);h.setUint32(18,data.length,true);h.setUint32(22,data.length,true);h.setUint16(26,name.length,true);
-    parts.push(h.buffer,name,data);
-    const c=new DataView(new ArrayBuffer(46));
-    c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(14,0x21,true);
-    c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,name.length,true);c.setUint32(42,off,true);
-    cen.push(c.buffer,name);off+=30+name.length+data.length;
+    h.setUint32(14,crc,true);h.setUint32(18,size,true);h.setUint32(22,size,true);h.setUint16(26,name.length,true);
+    parts.push(h.buffer,name,f.blob);                  // the file itself is referenced, never copied into memory
+    const e=new DataView(new ArrayBuffer(46));
+    e.setUint32(0,0x02014b50,true);e.setUint16(4,20,true);e.setUint16(6,20,true);e.setUint16(8,0x0800,true);e.setUint16(14,0x21,true);
+    e.setUint32(16,crc,true);e.setUint32(20,size,true);e.setUint32(24,size,true);e.setUint16(28,name.length,true);e.setUint32(42,off,true);
+    cen.push(e.buffer,name);off+=30+name.length+size;
   }
   const cs=cen.reduce((a,p)=>a+p.byteLength,0),e=new DataView(new ArrayBuffer(22));
   e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cs,true);e.setUint32(16,off,true);
@@ -660,9 +736,9 @@ function handleDial(c){
     };
   });
 }
-function connectDevice(id){
+async function connectDevice(id){
   const d=devs[id];if(!d)return;
-  newSession('g');try{peer&&peer.destroy();}catch(e){}
+  newSession('g');await unlockIPs();try{peer&&peer.destroy();}catch(e){}
   status('connecting to '+d.name+'…');
   const p=peer=new Peer();let finished=false;
   const fail=t=>{if(finished)return;finished=true;status('not connected');alert(t);try{p.destroy();}catch(e){}};
