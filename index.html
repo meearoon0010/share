@@ -26,6 +26,8 @@ video{width:100%;border-radius:10px;background:#000}
 progress{width:100%;height:8px}.m{color:var(--mu);font-size:13px}[hidden]{display:none!important}
 @media(min-width:800px){main{max-width:640px}}
 .drag{outline:2px dashed var(--ac);outline-offset:4px}
+.opt{display:flex;gap:14px;align-items:center;text-align:left;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-top:10px;width:100%;font:inherit;font-weight:600;cursor:pointer}
+.opt .ic{font-size:26px}.opt small{display:block;color:var(--mu);font-weight:400;font-size:13px;margin-top:2px}
 ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 </style>
 </head>
@@ -116,12 +118,9 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <div id="fnote" class="m" style="margin-top:4px"></div>
   <div id="out"></div>
   <div id="slotX"><div id="recvBox">
-  <b style="display:block;margin-top:16px">Received</b>
-  <button class="g" id="bSaveDir" hidden>💾 Save received files straight to a folder</button>
-  <div id="saveDirInfo" class="m"></div>
-  <div id="dlbar" hidden><button id="dlAll">Download all</button><button class="g" id="dlZip">Download all as ZIP</button>
-    <button class="g" id="dlShare" hidden>📤 Save all to Files / share…</button><button class="g" id="dlDir" hidden>📁 Save all into a folder…</button>
-    <button class="g" id="dlDel">🗑 Delete files I've downloaded</button><button class="g" id="dlClr">🗑 Delete everything received</button></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px"><b>Received</b>
+    <button id="clearAll" class="g" hidden style="width:auto;margin:0;padding:4px 10px;font-size:13px;border:0">Clear all</button></div>
+  <div id="saveBar" hidden><button id="saveAll">⬇ Save all</button><div id="saveSub" class="m" style="text-align:center;margin-top:4px"></div></div>
   <div id="folders"></div>
   <div id="inbox" class="m">Nothing yet.</div>
   </div></div>
@@ -135,6 +134,37 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <div id="slotL"></div>
   <button class="g" id="libBack">Back</button>
 </section>
+<div id="pv" hidden style="position:fixed;inset:0;z-index:70;background:var(--bg);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)">
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--bd)">
+    <button id="pvBack" class="g" style="width:auto;margin:0;padding:6px 12px;border:0">‹ Back</button>
+    <b id="pvTitle" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center"></b>
+    <span id="pvCount" class="m"></span>
+  </div>
+  <div id="pvWrap" style="flex:1;position:relative;min-height:0;padding:8px;display:flex">
+    <button id="pvPrev" class="g" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);width:auto;margin:0;padding:10px 14px;z-index:2;background:var(--card)">‹</button>
+    <div id="pvStage" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;overflow:auto"></div>
+    <button id="pvNext" class="g" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);width:auto;margin:0;padding:10px 14px;z-index:2;background:var(--card)">›</button>
+  </div>
+  <div style="padding:10px 14px max(14px,env(safe-area-inset-bottom));border-top:1px solid var(--bd)">
+    <div id="pvMeta" class="m" style="word-break:break-word"></div>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:stretch">
+      <a id="pvSave" class="btn" style="flex:1;margin:0">⬇ Save</a>
+      <button id="pvShare" class="g" hidden style="flex:1;margin:0">📤 Share</button>
+      <button id="pvDel" class="g" title="Delete" style="width:auto;margin:0">🗑</button>
+    </div>
+  </div>
+</div>
+<div id="sheet" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:60;display:flex;align-items:flex-end;justify-content:center">
+  <div class="card" style="width:100%;max-width:520px;margin:0;border-radius:18px 18px 0 0;padding-bottom:max(18px,env(safe-area-inset-bottom))">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b id="shTitle" style="font-size:18px">Save files</b>
+      <button id="shClose" class="g" style="width:auto;margin:0;padding:4px 12px;border:0">✕</button></div>
+    <div class="m" id="shSub"></div>
+    <div id="shOpts"></div>
+    <label id="shAutoWrap" class="m" hidden style="display:block;margin-top:12px"><input type="checkbox" id="shAuto"> Also save future files to this folder automatically</label>
+    <div id="shMsg" class="m" style="margin-top:12px"></div>
+    <progress id="shProg" hidden max="1" value="0"></progress>
+  </div>
+</div>
 <div id="prompt" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50">
   <div class="card" style="max-width:360px;width:100%;text-align:center;margin:0">
     <div id="pThumb"></div><b id="pTitle" style="font-size:18px"></b>
@@ -296,24 +326,39 @@ function wire(ch){
 function left(d,t,ms){if(!d||ms<1000)return'';const s=Math.round((t-d)/(d/ms)/1000);return ' · '+(s>=60?Math.floor(s/60)+'m '+s%60+'s':s+'s')+' left';}
 const AUD={mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav',flac:'audio/flac',ogg:'audio/ogg',opus:'audio/ogg',amr:'audio/amr',aif:'audio/aiff',aiff:'audio/aiff',wma:'audio/x-ms-wma'};
 const ext=n=>(n.split('.').pop()||'').toLowerCase();
-const guessMime=n=>AUD[ext(n)]||'application/octet-stream';
+const guessMime=n=>AUD[ext(n)]||MEDIA[ext(n)]||'application/octet-stream';
 const isAudio=(n,t)=>/^audio\//.test(t||'')||!!AUD[ext(n)];
 function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
-function fmt(n){return n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';}
+function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':n>=1e3?Math.round(n/1e3)+' KB':n+' B';}
 let saveDir=null;
 const cleanPath=p=>String(p||'').replace(/\\/g,'/').split('/').filter(x=>x&&x!=='.'&&x!=='..');
+function thumbFor(it){
+  const k=it.blob?kindOf(it):'file',box=document.createElement('div');
+  box.style.cssText='width:48px;height:48px;border-radius:10px;overflow:hidden;background:var(--bg);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:22px;flex:none';
+  if(it.blob&&k==='image'){const im=document.createElement('img');im.src=it.url;im.loading='lazy';im.decoding='async';im.alt='';im.style.cssText='width:100%;height:100%;object-fit:cover';im.onerror=()=>{im.remove();box.textContent='🖼';};box.appendChild(im);}
+  else if(it.blob&&k==='video'){const v=document.createElement('video');v.src=it.url+'#t=0.5';v.preload='metadata';v.muted=true;v.playsInline=true;v.style.cssText='width:100%;height:100%;object-fit:cover';box.appendChild(v);}
+  else box.textContent={audio:'🎵',pdf:'📕',text:'📄',image:'🖼',video:'🎬'}[k]||'📦';
+  return box;
+}
 function completeRow(it,row){
   const pr=row.querySelector('progress');if(pr)pr.remove();it.row=row;
+  if(it.blob)it.url=URL.createObjectURL(it.blob);
+  const head=row.firstChild,txt=head.textContent;head.textContent='';
+  head.style.cssText='display:flex;gap:10px;align-items:center'+(it.blob?';cursor:pointer':'');
+  const lab=document.createElement('div');lab.style.cssText='flex:1;min-width:0;word-break:break-word';lab.textContent=txt;
+  head.append(thumbFor(it),lab);if(it.blob)head.onclick=()=>openPreview(it);
+  const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;align-items:center;margin-top:6px';
+  it.badge=document.createElement('div');it.badge.style.flex='1';it.badge.className=it.done?'ok':'m';
+  it.badge.textContent=it.blob?(it.done?'✓ Saved':'Not saved yet'):'✓ Saved to your folder';bar.appendChild(it.badge);
   if(it.blob){
-    it.url=URL.createObjectURL(it.blob);
-    const a=document.createElement('a');a.href=it.url;a.download=it.base;a.className='btn';a.textContent='Save '+it.base;
-    a.addEventListener('click',()=>markDl(it));row.appendChild(a);
-    if(isAudio(it.base,it.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=it.url;au.style.cssText='width:100%;margin-top:6px';row.appendChild(au);}
+    const pv=document.createElement('button');pv.className='g';pv.textContent='Preview';pv.style.cssText='width:auto;margin:0;padding:6px 14px;font-size:14px';pv.onclick=()=>openPreview(it);bar.appendChild(pv);
+    const a=document.createElement('a');a.href=it.url;a.download=it.base;a.className='btn';a.textContent='Save';a.style.cssText='width:auto;margin:0;padding:6px 18px;font-size:14px';
+    a.addEventListener('click',()=>markDl(it));bar.appendChild(a);
   }
-  it.badge=document.createElement('div');it.badge.className=it.done?'ok':'m';
-  it.badge.textContent=it.blob?(it.done?'✓ Downloaded':'⏳ Not downloaded yet'):'✓ Saved to your folder';row.appendChild(it.badge);
-  const x=document.createElement('button');x.className='g';x.textContent='🗑 Delete';x.style.cssText='padding:6px;font-size:13px;margin-top:6px';
-  x.onclick=()=>{if(confirm('Delete '+it.base+' from this device?'))delItems([it]);};row.appendChild(x);
+  const x=document.createElement('button');x.className='g';x.textContent='🗑';x.title='Delete';x.style.cssText='width:auto;margin:0;padding:6px 10px;font-size:14px;border:0';
+  x.onclick=()=>{if(confirm('Delete '+it.base+' from this device?'))delItems([it]);};bar.appendChild(x);
+  row.appendChild(bar);
+  if(it.blob&&isAudio(it.base,it.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=it.url;au.style.cssText='width:100%;margin-top:6px';row.appendChild(au);}
 }
 function finishRx(r,blob){
   r.row.firstChild.textContent=r.label+' ✓ '+speed(r.got,performance.now()-r.t0);
@@ -552,69 +597,166 @@ function renderStats(){
   $('#stats').innerHTML='⬆ Sent <b>'+stats.sentDone+'</b> of '+stats.sentTotal+' files ('+fmt(stats.sentBytes)+')'
     +(stats.failed?' · <span style="color:#dc2626">'+stats.failed+' failed</span>':'')
     +'<br>⬇ Received <b>'+stats.recvDone+'</b> files ('+fmt(stats.recvBytes)+')'
-    +'<br>💾 Downloaded <b>'+dl+'</b> · ⏳ Waiting to download <b>'+(received.length-dl)+'</b>';
-  $('#dlbar').hidden=!received.length;$('#bLib').textContent='📥 Received files ('+received.length+')';
-  $('#dlAll').textContent=wait?'Download one by one ('+wait+' files)':'All files downloaded ✓';$('#dlAll').disabled=!wait;const nb=received.filter(f=>f.blob).length;$('#dlZip').hidden=!nb;if(!zipBusy)$('#dlZip').textContent='Download all '+nb+' as ZIP (keeps folders)';
-  $('#dlShare').hidden=!(nb&&canShareFiles());$('#dlDir').hidden=!(nb&&!!window.showDirectoryPicker);renderFolders();
+    +'<br>💾 Saved <b>'+dl+'</b> · ⏳ Not saved yet <b>'+(received.length-dl)+'</b>';
+  $('#bLib').textContent='📥 Received files ('+received.length+')';
+  const nb=received.filter(f=>f.blob).length;
+  $('#saveBar').hidden=!nb;$('#saveAll').textContent='⬇ Save all ('+nb+')';
+  $('#saveSub').textContent=saveDir?'Auto-saving new files to "'+saveDir.name+'"':(wait?wait+' not saved yet':'All files saved ✓');
+  $('#clearAll').hidden=!received.length;renderFolders();
 }
-// ---- saving: ZIP, share sheet ("Save to Files"), or straight into a chosen folder ----
+// ---- saving: one clean "Save" sheet (Gallery / Folder), ZIP only as a fallback ----
 var zipBusy=false;
-const mkBtn=(t,fn)=>{const b=document.createElement('button');b.className='g';b.textContent=t;b.style.cssText='padding:8px;font-size:14px;margin-top:6px';b.onclick=fn;return b;};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const MEDIA={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',heic:'image/heic',heif:'image/heif',avif:'image/avif',bmp:'image/bmp',mp4:'video/mp4',m4v:'video/mp4',mov:'video/quicktime',webm:'video/webm','3gp':'video/3gpp',mkv:'video/x-matroska',avi:'video/x-msvideo'};
+const isMedia=f=>/^(image|video)\//.test(f.type||'')||!!MEDIA[ext(f.base)];
+const mimeOf=f=>(f.blob&&f.blob.type)||f.type||guessMime(f.base);
 function canShareFiles(){try{const t=new File(['a'],'a.txt',{type:'text/plain'});return !!(navigator.share&&navigator.canShare&&navigator.canShare({files:[t]}));}catch(e){return false;}}
-async function zipDownload(list,fname,btn){
-  const items=list.filter(f=>f.blob);if(!items.length||zipBusy)return;
-  if(items.reduce((a,f)=>a+f.size,0)>3.5e9)return alert('Too large for one ZIP (over 3.5 GB). Use "Save into a folder" or the Files option instead.');
-  zipBusy=true;const old=btn.textContent;btn.disabled=true;
-  try{
-    const all=uniqueNames(),map=new Map(received.map((f,i)=>[f,all[i]]));
-    const b=await makeZip(items.map(f=>({name:map.get(f)||f.name,blob:f.blob})),p=>{btn.textContent='Zipping… '+Math.round(p*100)+'%';});
-    const u=URL.createObjectURL(b);saveBlobUrl(u,fname);items.forEach(markDl);setTimeout(()=>URL.revokeObjectURL(u),120000);
-  }catch(e){alert('Could not create the ZIP: '+((e&&e.message)||e)+'. Try saving into a folder or Files instead.');}
-  finally{zipBusy=false;btn.disabled=false;btn.textContent=old;renderStats();}
-}
-async function shareFiles(list){
-  const files=list.filter(f=>f.blob).map(f=>new File([f.blob],f.base,{type:f.blob.type||'application/octet-stream'}));
-  if(!files.length)return;
-  try{
-    if(!(navigator.canShare&&navigator.canShare({files})))return alert('This browser cannot share this many or this large files at once. Use ZIP instead.');
-    await navigator.share({files});list.forEach(f=>{if(f.blob)markDl(f);});
-  }catch(e){if(!e||e.name!=='AbortError')alert('Could not open the share sheet: '+((e&&e.message)||e));}
-}
-async function saveToDir(list){
+const folderMode=()=>window.showDirectoryPicker?'picker':canShareFiles()?'share':'zip';
+const mkBtn=(t,fn)=>{const b=document.createElement('button');b.className='g';b.textContent=t;b.style.cssText='padding:8px;font-size:14px;margin-top:6px';b.onclick=fn;return b;};
+let sheetBusy=false;
+function sheetMsg(t,prog){$('#shMsg').textContent=t||'';const p=$('#shProg');p.hidden=prog==null;if(prog!=null)p.value=prog;}
+function closeSheet(){if(!sheetBusy)$('#sheet').hidden=true;}
+$('#shClose').onclick=closeSheet;
+$('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet')closeSheet();});
+$('#shAuto').onchange=e=>{if(!e.target.checked){saveDir=null;renderStats();}};
+function openSheet(list,title,zipName){
   const items=list.filter(f=>f.blob);if(!items.length)return;
-  let root;try{root=await showDirectoryPicker({mode:'readwrite'});}catch(e){return;}
+  const media=items.filter(isMedia),mode=folderMode(),n=items.length,box=$('#shOpts');
+  $('#shTitle').textContent=title||'Save files';
+  $('#shSub').textContent=n+' file'+(n>1?'s':'')+' · '+fmt(items.reduce((a,f)=>a+f.size,0));
+  sheetMsg('');box.textContent='';
+  const opt=(ic,t,sub,fn)=>{const b=document.createElement('button');b.className='opt';
+    b.innerHTML='<span class="ic"></span><span><span class="t"></span><small></small></span>';
+    b.querySelector('.ic').textContent=ic;b.querySelector('.t').textContent=t;b.querySelector('small').textContent=sub;
+    b.onclick=fn;box.appendChild(b);};
+  if(media.length)opt('🖼','Save to Photos / Gallery',media.length+' photo'+(media.length>1?'s':'')+' & video'+(media.length>1?'s':'')+
+    (PLAT==='iOS'?' · tap “Save to Photos” next':PLAT==='Android'?' · pick Gallery or Google Photos next':' · saved to your Downloads'),()=>runSave(()=>saveToGallery(media)));
+  opt('📁','Save to a folder',mode==='picker'?'Choose where — folder structure is kept':mode==='share'?'Choose a folder in the Files app':'Downloads as one ZIP file',()=>runSave(()=>saveToFolder(items,zipName)));
+  $('#shAutoWrap').hidden=mode!=='picker';$('#shAuto').checked=!!saveDir;
+  $('#sheet').hidden=false;
+}
+async function runSave(fn){
+  if(sheetBusy)return;sheetBusy=true;
+  try{await fn();}catch(e){if(e&&e.name==='AbortError')sheetMsg('');else sheetMsg('Could not save: '+((e&&e.message)||e));}
+  finally{sheetBusy=false;}
+}
+const asFiles=l=>l.map(f=>new File([f.blob],f.base,{type:mimeOf(f)}));
+async function saveToGallery(media){
+  const files=asFiles(media);
+  if(navigator.share&&navigator.canShare&&navigator.canShare({files})){
+    await navigator.share({files});
+    media.forEach(markDl);sheetMsg('✓ Done — '+media.length+' item'+(media.length>1?'s':'')+' shared to your gallery app.',1);return;
+  }
   let n=0;
-  try{
+  for(const f of media){saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);markDl(f);n++;sheetMsg('Saving '+n+' of '+media.length+'…',n/media.length);await sleep(600);}
+  sheetMsg('✓ '+n+' file'+(n>1?'s':'')+' saved to your Downloads'+(PLAT==='Android'?' — they also show up in your Gallery.':'.'),1);
+}
+async function saveToFolder(items,zipName){
+  const mode=folderMode();
+  if(mode==='picker'){
+    const root=await showDirectoryPicker({mode:'readwrite'});
+    if($('#shAuto').checked)saveDir=root;
+    let n=0;
     for(const it of items){
       const parts=cleanPath(it.name);let d=root;
       for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
-      const w=await(await d.getFileHandle(parts[parts.length-1],{create:true})).createWritable();await w.write(it.blob);await w.close();markDl(it);n++;
+      const w=await(await d.getFileHandle(parts[parts.length-1],{create:true})).createWritable();await w.write(it.blob);await w.close();
+      markDl(it);n++;sheetMsg('Saving '+n+' of '+items.length+'…',n/items.length);
     }
-    alert('Saved '+n+' file(s) into "'+root.name+'".');
-  }catch(e){alert('Saved '+n+' of '+items.length+' files. Error: '+((e&&e.message)||e));}
+    sheetMsg('✓ Saved '+n+' file'+(n>1?'s':'')+' to “'+root.name+'”.'+(saveDir===root?' New files will be saved there automatically.':''),1);renderStats();return;
+  }
+  if(mode==='share'){
+    const files=asFiles(items);
+    if(navigator.canShare(files.length?{files}:{})){await navigator.share({files});items.forEach(markDl);sheetMsg('✓ Done.',1);return;}
+  }
+  await zipDownload(items,(zipName||'transfer-'+new Date().toISOString().slice(0,10))+'.zip');
+}
+async function zipDownload(list,fname){
+  const items=list.filter(f=>f.blob);if(!items.length||zipBusy)return;
+  if(items.reduce((a,f)=>a+f.size,0)>3.5e9)throw new Error('Too large for one ZIP (over 3.5 GB). Save a few files at a time.');
+  zipBusy=true;
+  try{
+    const all=uniqueNames(),map=new Map(received.map((f,i)=>[f,all[i]]));
+    const b=await makeZip(items.map(f=>({name:map.get(f)||f.name,blob:f.blob})),p=>sheetMsg('Preparing ZIP… '+Math.round(p*100)+'%',p));
+    const u=URL.createObjectURL(b);saveBlobUrl(u,fname);items.forEach(markDl);setTimeout(()=>URL.revokeObjectURL(u),120000);
+    sheetMsg('✓ Saved “'+fname+'” to your Downloads.',1);
+  }finally{zipBusy=false;renderStats();}
 }
 function renderFolders(){
-  if(zipBusy)return;
   const g={};
   for(const f of received){const i=f.name.indexOf('/');if(i>0&&f.blob){const k=f.name.slice(0,i);(g[k]=g[k]||[]).push(f);}}
   const box=$('#folders');box.textContent='';
   for(const k of Object.keys(g)){
-    const L=g[k],row=document.createElement('div');row.className='row';
-    const t=document.createElement('div');t.style.fontWeight='600';t.textContent='📁 '+k+' — '+L.length+' files · '+fmt(L.reduce((a,f)=>a+f.size,0));row.appendChild(t);
-    const z=mkBtn('Download folder as ZIP',()=>zipDownload(L,k+'.zip',z));row.appendChild(z);
-    if(canShareFiles())row.appendChild(mkBtn('Save folder to Files…',()=>shareFiles(L)));
-    if(window.showDirectoryPicker)row.appendChild(mkBtn('Save folder into a folder…',()=>saveToDir(L)));
+    const L=g[k],row=document.createElement('div');row.className='row';row.style.cssText='display:flex;align-items:center;gap:8px';
+    const t=document.createElement('div');t.style.cssText='flex:1;font-weight:600';t.textContent='📁 '+k+' · '+L.length+' files · '+fmt(L.reduce((a,f)=>a+f.size,0));row.appendChild(t);
+    const b=document.createElement('button');b.textContent='Save';b.style.cssText='width:auto;margin:0;padding:6px 18px;font-size:14px';b.onclick=()=>openSheet(L,'Save “'+k+'”',k);row.appendChild(b);
     box.appendChild(row);
   }
 }
-function markDl(it){it.done=true;it.badge.textContent='✓ Downloaded';it.badge.className='ok';dbMeta(it);renderStats();}
+// ---- preview page ----
+let pvIt=null,pvTmp=null,pvX=null;
+const kindOf=it=>{
+  const t=mimeOf(it),e=ext(it.base);
+  if(/^image\//.test(t)||/^(jpe?g|png|gif|webp|avif|bmp|svg|heic|heif)$/.test(e))return'image';
+  if(/^video\//.test(t)||(MEDIA[e]&&/^video/.test(MEDIA[e])))return'video';
+  if(isAudio(it.base,t))return'audio';
+  if(t==='application/pdf'||e==='pdf')return'pdf';
+  if(/^text\//.test(t)||/^(txt|md|json|csv|log|xml|html?|css|js|ts|py|java|c|cpp|h|sh|yml|yaml|ini|srt|vtt|tsv)$/.test(e))return'text';
+  return'file';
+};
+const pvList=()=>received.filter(f=>f.blob);
+function pvClearTmp(){if(pvTmp){URL.revokeObjectURL(pvTmp);pvTmp=null;}}
+function typedUrl(it){const t=mimeOf(it);if(it.blob.type===t)return it.url;pvClearTmp();pvTmp=URL.createObjectURL(new Blob([it.blob],{type:t}));return pvTmp;}
+async function renderPreview(){
+  const it=pvIt;if(!it)return;
+  const L=pvList(),i=L.indexOf(it),k=kindOf(it),st=$('#pvStage');pvClearTmp();st.textContent='';
+  $('#pvTitle').textContent=it.base;$('#pvCount').textContent=(i+1)+' / '+L.length;
+  $('#pvPrev').hidden=i<=0;$('#pvNext').hidden=i>=L.length-1;
+  $('#pvMeta').textContent=(it.name.includes('/')?it.name+' — ':'')+[fmt(it.size),mimeOf(it),it.from?'from '+it.from:'',new Date(it.t).toLocaleString()].filter(Boolean).join(' · ');
+  const sv=$('#pvSave');sv.href=it.url;sv.download=it.base;$('#pvShare').hidden=!canShareFiles();
+  const card=(ic,msg)=>{st.textContent='';const d=document.createElement('div');d.style.cssText='text-align:center;padding:20px';
+    const a=document.createElement('div');a.style.fontSize='72px';a.textContent=ic;const b=document.createElement('div');b.className='m';b.style.marginTop='8px';b.textContent=msg;d.append(a,b);st.appendChild(d);};
+  const fit='max-width:100%;max-height:100%;';
+  if(k==='image'){const im=document.createElement('img');im.alt=it.base;im.style.cssText=fit+'object-fit:contain';im.onerror=()=>card('🖼','Can’t show this image format here — you can still save it.');im.src=it.url;st.appendChild(im);}
+  else if(k==='video'){const v=document.createElement('video');v.controls=true;v.playsInline=true;v.style.cssText=fit;v.onerror=()=>card('🎬','Can’t play this video format here — you can still save it.');v.src=typedUrl(it);st.appendChild(v);}
+  else if(k==='audio'){card('🎵','');const au=document.createElement('audio');au.controls=true;au.style.cssText='width:100%;max-width:420px';au.src=typedUrl(it);st.firstChild.appendChild(au);}
+  else if(k==='pdf'){const f=document.createElement('iframe');f.title=it.base;f.style.cssText='width:100%;height:100%;border:0;background:#fff;border-radius:8px';f.src=typedUrl(it);st.appendChild(f);}
+  else if(k==='text'){
+    const pre=document.createElement('pre');pre.style.cssText='margin:0;width:100%;height:100%;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.45 ui-monospace,monospace;text-align:left;padding:4px';
+    st.appendChild(pre);
+    const cut=it.size>200000,t=await it.blob.slice(0,200000).text();if(pvIt!==it)return;pre.textContent=t+(cut?'\n\n… preview shows the first 200 KB':'');
+  }else card('📦','No preview for this file type. You can still save it.');
+}
+function openPreview(it){
+  if(!it||!it.blob)return;pvIt=it;
+  if($('#pv').hidden){try{history.pushState({pv:1},'');}catch(e){}$('#pv').hidden=false;}
+  renderPreview();
+}
+function closePreview(fromPop){
+  if($('#pv').hidden)return;
+  $('#pv').hidden=true;pvIt=null;pvClearTmp();$('#pvStage').textContent='';
+  if(!fromPop){try{if(history.state&&history.state.pv)history.back();}catch(e){}}
+}
+function pvStep(d){const L=pvList(),i=L.indexOf(pvIt)+d;if(i>=0&&i<L.length){pvIt=L[i];renderPreview();}}
+$('#pvBack').onclick=()=>closePreview();
+$('#pvPrev').onclick=()=>pvStep(-1);$('#pvNext').onclick=()=>pvStep(1);
+$('#pvSave').addEventListener('click',()=>{if(pvIt)markDl(pvIt);});
+$('#pvShare').onclick=async()=>{const it=pvIt;if(!it)return;try{await navigator.share({files:asFiles([it])});markDl(it);}catch(e){}};
+$('#pvDel').onclick=()=>{
+  const it=pvIt;if(!it||!confirm('Delete '+it.base+' from this device?'))return;
+  const L=pvList(),i=L.indexOf(it),next=L[i+1]||L[i-1];delItems([it]);
+  if(next){pvIt=next;renderPreview();}else closePreview();
+};
+window.addEventListener('popstate',()=>{if(!$('#pv').hidden)closePreview(true);});
+document.addEventListener('keydown',e=>{if($('#pv').hidden)return;if(e.key==='Escape')closePreview();else if(e.key==='ArrowLeft')pvStep(-1);else if(e.key==='ArrowRight')pvStep(1);});
+$('#pvWrap').addEventListener('touchstart',e=>{pvX=e.touches[0].clientX;},{passive:true});
+$('#pvWrap').addEventListener('touchend',e=>{if(pvX==null)return;const dx=e.changedTouches[0].clientX-pvX;pvX=null;if(Math.abs(dx)>70)pvStep(dx<0?1:-1);},{passive:true});
+$('#saveAll').onclick=()=>openSheet(received,'Save all files');
+$('#clearAll').onclick=()=>{if(received.length&&confirm('Delete all '+received.length+' received file(s) from this device?'))delItems([...received]);};
+function markDl(it){it.done=true;it.badge.textContent='✓ Saved';it.badge.className='ok';dbMeta(it);renderStats();}
 function uniqueNames(){const seen={};return received.map(f=>{const k=f.name;if(!seen[k]){seen[k]=1;return k;}
   const sl=k.lastIndexOf('/'),dd=k.lastIndexOf('.'),d=dd>sl+1?dd:-1,b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
 function saveBlobUrl(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
-$('#dlAll').onclick=async()=>{const nm=uniqueNames();for(let i=0;i<received.length;i++){if(received[i].done)continue;saveBlobUrl(received[i].url,nm[i].split('/').pop());markDl(received[i]);await new Promise(r=>setTimeout(r,700));}};
-$('#dlZip').onclick=()=>zipDownload(received,'transfer-'+new Date().toISOString().slice(0,10)+'.zip',$('#dlZip'));
-$('#dlShare').onclick=()=>shareFiles(received);
-$('#dlDir').onclick=()=>saveToDir(received);
 const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
 function crcUpdate(c,u){for(let i=0;i<u.length;i++)c=CRC[(c^u[i])&255]^(c>>>8);return c;}
 async function makeZip(files,onProg){
@@ -666,8 +808,6 @@ async function shrink(f){
     const nf=new File([b],f.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});const p0=f._p||f.webkitRelativePath;if(p0)nf._p=p0.replace(/[^/]*$/,nf.name);return nf;
   }catch(e){return f;}
 }
-if(window.showDirectoryPicker)$('#bSaveDir').hidden=false;
-$('#bSaveDir').onclick=async()=>{try{saveDir=await showDirectoryPicker({mode:'readwrite'});$('#saveDirInfo').textContent='New files are saved to "'+saveDir.name+'" with their folder structure. Large files are written directly to disk.';}catch(e){}};
 // ---- AirDrop-style features: device name, saved devices, accept/decline, receiving on/off ----
 const PLAT=/iPhone|iPad|iPod/.test(navigator.userAgent)?'iOS':/Android/.test(navigator.userAgent)?'Android':/Windows/.test(navigator.userAgent)?'Windows':/Mac/.test(navigator.userAgent)?'Mac':'Other';
 const DEFNAME={iOS:'iPhone',Android:'Android phone',Windows:'Windows PC',Mac:'Mac',Other:'Device'}[PLAT];
@@ -688,8 +828,6 @@ $('#autoAcc').onchange=e=>LS.set('dt-auto',e.target.checked?'1':'0');
 $('#remember').onchange=e=>LS.set('dt-rem',e.target.checked?'1':'0');
 $('#bLib').onclick=()=>view('lib');
 $('#libBack').onclick=()=>view((sess&&!userClosed)||(dc&&dc.readyState==='open')?'xfer':'home');
-$('#dlDel').onclick=()=>{const l=received.filter(f=>f.done&&f.blob);if(l.length&&confirm('Delete '+l.length+' downloaded file(s) from this device?'))delItems(l);};
-$('#dlClr').onclick=()=>{if(received.length&&confirm('Delete ALL '+received.length+' received file(s) from this device?'))delItems([...received]);};
 
 function renderDevs(){
   const ids=Object.keys(devs).sort((a,b)=>(devs[b].last||0)-(devs[a].last||0));
