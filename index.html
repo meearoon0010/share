@@ -641,17 +641,21 @@ function friendlyErr(e){
   if(n==='AbortError')return '';
   if(n==='NotAllowedError')return 'Your browser blocked the share sheet — too many or too large files at once, or the tap expired. Try again or save in smaller groups.';
   if(n==='DataError'||/too (large|many)/i.test(m))return 'That is too much for the share sheet at once. Save in smaller groups.';
-  return 'Could not save: '+m;
+  return 'Could not save ('+(n||'error')+'): '+m;
 }
 function showFallback(label,fn){const b=$('#shFb');b.textContent=label;b.hidden=false;b.onclick=()=>{b.hidden=true;runSave(fn);};}
+var lastSave=0;
+const recentSave=()=>sheetBusy||Date.now()-lastSave<180000;
 async function runSave(fn){
-  if(sheetBusy)return;sheetBusy=true;
+  if(sheetBusy)return;
+  if(rx){sheetMsg('A file is still arriving. Wait for it to finish, then save — so nothing gets interrupted.');return;}
+  sheetBusy=true;lastSave=Date.now();
   try{await fn();}catch(e){sheetMsg(friendlyErr(e));}
-  finally{sheetBusy=false;}
+  finally{sheetBusy=false;lastSave=Date.now();}
 }
 const asFiles=l=>l.map(f=>new File([f.blob],f.base,{type:mimeOf(f)}));
 function planBatches(items){
-  const MAXN=25,MAXB=300e6,out=[];let cur=[],sz=0;
+  const ios=PLAT==='iOS',MAXN=ios?8:25,MAXB=ios?80e6:300e6,out=[];let cur=[],sz=0;
   for(const it of items){if(cur.length&&(cur.length>=MAXN||sz+it.size>MAXB)){out.push(cur);cur=[];sz=0;}cur.push(it);sz+=it.size;}
   if(cur.length)out.push(cur);return out;
 }
@@ -786,6 +790,8 @@ $('#pvDel').onclick=()=>{
   const L=pvList(),i=L.indexOf(it),next=L[i+1]||L[i-1];delItems([it]);
   if(next){pvIt=next;renderPreview();}else closePreview();
 };
+const wake=()=>{if(sess&&!userClosed&&(!dc||dc.readyState!=='open'))dropped();};
+window.addEventListener('pageshow',wake);window.addEventListener('focus',wake);
 window.addEventListener('popstate',()=>{if(!$('#pv').hidden)closePreview(true);});
 document.addEventListener('keydown',e=>{if($('#pv').hidden)return;if(e.key==='Escape')closePreview();else if(e.key==='ArrowLeft')pvStep(-1);else if(e.key==='ArrowRight')pvStep(1);});
 $('#pvWrap').addEventListener('touchstart',e=>{pvX=e.touches[0].clientX;},{passive:true});
@@ -995,7 +1001,7 @@ function resume(){
     if(my!==attemptId||!resuming)return;
     if(Date.now()-t0>15*60*1000){resuming=false;status('disconnected');warnMsg('Could not reconnect. Tap Disconnect and connect again with QR or a code.');return;}
     tries++;
-    warnMsg(navigator.onLine===false?'You are offline — will reconnect as soon as internet returns…':tries<4?'Connection lost — reconnecting automatically… (tap Disconnect to connect to a different device)':'Still trying to reconnect… The other device must be open and online too. Tap Disconnect to start over with QR or a code.');
+    warnMsg(navigator.onLine===false?'You are offline — will reconnect as soon as internet returns…':tries<4?(recentSave()?'Paused while saving — reconnecting automatically… Your files are safe on this device.':'Connection lost — reconnecting automatically… (tap Disconnect to connect to a different device)'):'Still trying to reconnect… The other device must be open and online too. Tap Disconnect to start over with QR or a code.');
     try{peer&&peer.destroy();}catch(e){}
     const p=peer=new Peer(me);
     p.on('open',()=>{
