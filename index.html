@@ -162,6 +162,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
     <div id="shOpts"></div>
     <label id="shAutoWrap" class="m" hidden style="display:block;margin-top:12px"><input type="checkbox" id="shAuto"> Also save future files to this folder automatically</label>
     <div id="shMsg" class="m" style="margin-top:12px"></div>
+    <button id="shFb" class="g" hidden style="margin-top:8px"></button>
     <progress id="shProg" hidden max="1" value="0"></progress>
   </div>
 </div>
@@ -609,7 +610,7 @@ var zipBusy=false;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const MEDIA={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',heic:'image/heic',heif:'image/heif',avif:'image/avif',bmp:'image/bmp',mp4:'video/mp4',m4v:'video/mp4',mov:'video/quicktime',webm:'video/webm','3gp':'video/3gpp',mkv:'video/x-matroska',avi:'video/x-msvideo'};
 const isMedia=f=>/^(image|video)\//.test(f.type||'')||!!MEDIA[ext(f.base)];
-const mimeOf=f=>(f.blob&&f.blob.type)||f.type||guessMime(f.base);
+const mimeOf=f=>{const t=(f.blob&&f.blob.type)||f.type||'';return t&&t!=='application/octet-stream'?t:guessMime(f.base);};
 function canShareFiles(){try{const t=new File(['a'],'a.txt',{type:'text/plain'});return !!(navigator.share&&navigator.canShare&&navigator.canShare({files:[t]}));}catch(e){return false;}}
 const folderMode=()=>window.showDirectoryPicker?'picker':canShareFiles()?'share':'zip';
 const mkBtn=(t,fn)=>{const b=document.createElement('button');b.className='g';b.textContent=t;b.style.cssText='padding:8px;font-size:14px;margin-top:6px';b.onclick=fn;return b;};
@@ -624,7 +625,7 @@ function openSheet(list,title,zipName){
   const media=items.filter(isMedia),mode=folderMode(),n=items.length,box=$('#shOpts');
   $('#shTitle').textContent=title||'Save files';
   $('#shSub').textContent=n+' file'+(n>1?'s':'')+' · '+fmt(items.reduce((a,f)=>a+f.size,0));
-  sheetMsg('');box.textContent='';
+  sheetMsg('');$('#shFb').hidden=true;box.textContent='';
   const opt=(ic,t,sub,fn)=>{const b=document.createElement('button');b.className='opt';
     b.innerHTML='<span class="ic"></span><span><span class="t"></span><small></small></span>';
     b.querySelector('.ic').textContent=ic;b.querySelector('.t').textContent=t;b.querySelector('small').textContent=sub;
@@ -635,21 +636,59 @@ function openSheet(list,title,zipName){
   $('#shAutoWrap').hidden=mode!=='picker';$('#shAuto').checked=!!saveDir;
   $('#sheet').hidden=false;
 }
+function friendlyErr(e){
+  const n=e&&e.name,m=(e&&e.message)||String(e);
+  if(n==='AbortError')return '';
+  if(n==='NotAllowedError')return 'Your browser blocked the share sheet — too many or too large files at once, or the tap expired. Try again or save in smaller groups.';
+  if(n==='DataError'||/too (large|many)/i.test(m))return 'That is too much for the share sheet at once. Save in smaller groups.';
+  return 'Could not save: '+m;
+}
+function showFallback(label,fn){const b=$('#shFb');b.textContent=label;b.hidden=false;b.onclick=()=>{b.hidden=true;runSave(fn);};}
 async function runSave(fn){
   if(sheetBusy)return;sheetBusy=true;
-  try{await fn();}catch(e){if(e&&e.name==='AbortError')sheetMsg('');else sheetMsg('Could not save: '+((e&&e.message)||e));}
+  try{await fn();}catch(e){sheetMsg(friendlyErr(e));}
   finally{sheetBusy=false;}
 }
 const asFiles=l=>l.map(f=>new File([f.blob],f.base,{type:mimeOf(f)}));
-async function saveToGallery(media){
-  const files=asFiles(media);
-  if(navigator.share&&navigator.canShare&&navigator.canShare({files})){
-    await navigator.share({files});
-    media.forEach(markDl);sheetMsg('✓ Done — '+media.length+' item'+(media.length>1?'s':'')+' shared to your gallery app.',1);return;
-  }
+function planBatches(items){
+  const MAXN=25,MAXB=300e6,out=[];let cur=[],sz=0;
+  for(const it of items){if(cur.length&&(cur.length>=MAXN||sz+it.size>MAXB)){out.push(cur);cur=[];sz=0;}cur.push(it);sz+=it.size;}
+  if(cur.length)out.push(cur);return out;
+}
+async function downloadAll(list){
   let n=0;
-  for(const f of media){saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);markDl(f);n++;sheetMsg('Saving '+n+' of '+media.length+'…',n/media.length);await sleep(600);}
+  for(const f of list){saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);markDl(f);n++;sheetMsg('Saving '+n+' of '+list.length+'…',n/list.length);await sleep(600);}
   sheetMsg('✓ '+n+' file'+(n>1?'s':'')+' saved to your Downloads'+(PLAT==='Android'?' — they also show up in your Gallery.':'.'),1);
+}
+async function shareBatch(list){await navigator.share({files:asFiles(list)});list.forEach(markDl);}
+async function saveToGallery(media){
+  const can=!!(navigator.share&&navigator.canShare),files=asFiles(media);
+  const ok=can?media.filter((it,i)=>{try{return navigator.canShare({files:[files[i]]});}catch(e){return false;}}):[];
+  const other=media.filter(it=>!ok.includes(it));
+  if(!ok.length){await downloadAll(media);return;}
+  const batches=planBatches(ok);
+  if(batches.length===1){
+    try{await shareBatch(batches[0]);}catch(e){if(e&&e.name==='AbortError')return;sheetMsg(friendlyErr(e));showFallback('Download to this device instead',()=>downloadAll(media));return;}
+    sheetMsg('✓ Done — '+batches[0].length+' item'+(batches[0].length>1?'s':'')+' sent to your gallery app.',1);
+    if(other.length)await downloadAll(other);
+    return;
+  }
+  // big selections: one button per group so every share gets its own tap (phones need that)
+  const box=$('#shOpts');box.textContent='';let at=0;
+  sheetMsg('Large selection — saved in '+batches.length+' groups. Tap each group below.');
+  batches.forEach((b,i)=>{
+    const btn=document.createElement('button');btn.className='opt';
+    btn.innerHTML='<span class="ic">🖼</span><span><span class="t"></span><small></small></span>';
+    btn.querySelector('.t').textContent='Save group '+(i+1)+' of '+batches.length;
+    btn.querySelector('small').textContent=b.length+' item'+(b.length>1?'s':'')+' · '+fmt(b.reduce((a,f)=>a+f.size,0));
+    btn.onclick=()=>runSave(async()=>{
+      try{await shareBatch(b);}catch(e){if(e&&e.name==='AbortError')return;throw e;}
+      btn.disabled=true;btn.querySelector('small').textContent='✓ Saved';btn.style.opacity='.6';
+      if(++at===batches.length)sheetMsg('✓ All '+media.length+' items sent to your gallery app.',1);else sheetMsg('✓ Group '+(i+1)+' done — '+(batches.length-at)+' to go.',at/batches.length);
+    });
+    box.appendChild(btn);
+  });
+  if(other.length){const o=mkBtn('Download '+other.length+' other file'+(other.length>1?'s':'')+' to this device',()=>runSave(()=>downloadAll(other)));box.appendChild(o);}
 }
 async function saveToFolder(items,zipName){
   const mode=folderMode();
