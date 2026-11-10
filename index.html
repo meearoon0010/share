@@ -321,7 +321,7 @@ function wire(ch){
   dc.onmessage=onMsg;
   dc.onclose=()=>onDcClose(ch);
   const hs=()=>{if(!sess&&myRole==='h'){const tok=randTok();setSess(tok,'h');try{ch.send(JSON.stringify({t:'sess',tok}));}catch(e){}}
-    try{ch.send(JSON.stringify({t:'hello',id:myId,name:myName(),plat:PLAT,v:2}));}catch(e){}};
+    try{ch.send(JSON.stringify({t:'hello',id:myId,name:myName(),plat:PLAT,v:3}));}catch(e){}};
   if(ch.readyState==='open')hs();else ch.addEventListener('open',hs,{once:true});
 }
 function left(d,t,ms){if(!d||ms<1000)return'';const s=Math.round((t-d)/(d/ms)/1000);return ' · '+(s>=60?Math.floor(s/60)+'m '+s%60+'s':s+'s')+' left';}
@@ -333,12 +333,31 @@ function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':n>=1e3?Math.round(n/1e3)+' KB':n+' B';}
 let saveDir=null;
 const cleanPath=p=>String(p||'').replace(/\\/g,'/').split('/').filter(x=>x&&x!=='.'&&x!=='..');
+const thumbQ=[];let thumbBusy=false;
+async function makeThumb(it){
+  if(it.size>60e6)return null;
+  let bm;
+  try{bm=await createImageBitmap(it.blob,{resizeWidth:96,resizeQuality:'low'});}catch(e){try{bm=await createImageBitmap(it.blob);}catch(e2){return null;}}
+  const sc=Math.min(1,96/Math.max(bm.width,bm.height)),c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(bm.width*sc));c.height=Math.max(1,Math.round(bm.height*sc));
+  c.getContext('2d').drawImage(bm,0,0,c.width,c.height);if(bm.close)bm.close();
+  return c.toDataURL('image/jpeg',0.6);
+}
+async function pumpThumbs(){
+  if(thumbBusy)return;thumbBusy=true;
+  while(thumbQ.length){
+    const [it,box]=thumbQ.shift();if(!box.isConnected||it._th)continue;
+    try{const u=await makeThumb(it);if(u&&box.isConnected){it._th=u;const im=document.createElement('img');im.src=u;im.alt='';im.style.cssText='width:100%;height:100%;object-fit:cover';box.textContent='';box.appendChild(im);}}catch(e){}
+    await sleep(40);
+  }
+  thumbBusy=false;
+}
+const thumbIO=typeof IntersectionObserver!=='undefined'?new IntersectionObserver(es=>{for(const e of es)if(e.isIntersecting){thumbIO.unobserve(e.target);thumbQ.push([e.target._it,e.target]);}pumpThumbs();},{rootMargin:'200px'}):null;
 function thumbFor(it){
   const k=it.blob?kindOf(it):'file',box=document.createElement('div');
   box.style.cssText='width:48px;height:48px;border-radius:10px;overflow:hidden;background:var(--bg);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:22px;flex:none';
-  if(it.blob&&k==='image'){const im=document.createElement('img');im.src=it.url;im.loading='lazy';im.decoding='async';im.alt='';im.style.cssText='width:100%;height:100%;object-fit:cover';im.onerror=()=>{im.remove();box.textContent='🖼';};box.appendChild(im);}
-  else if(it.blob&&k==='video'){const v=document.createElement('video');v.src=it.url+'#t=0.5';v.preload='metadata';v.muted=true;v.playsInline=true;v.style.cssText='width:100%;height:100%;object-fit:cover';box.appendChild(v);}
-  else box.textContent={audio:'🎵',pdf:'📕',text:'📄',image:'🖼',video:'🎬'}[k]||'📦';
+  box.textContent={audio:'🎵',pdf:'📕',text:'📄',image:'🖼',video:'🎬'}[k]||'📦';
+  if(it.blob&&k==='image'){box._it=it;if(thumbIO)thumbIO.observe(box);else{thumbQ.push([it,box]);pumpThumbs();}}
   return box;
 }
 function completeRow(it,row){
@@ -401,6 +420,7 @@ function onMsg(e){
     const m=JSON.parse(e.data);
     if(m.t==='sess'){if(myRole==='g'&&/^[0-9a-f]{32}$/.test(m.tok))setSess(m.tok,'g');return;}
     if(m.t==='bye'){userClosed=true;resuming=false;attemptId++;clearTimeout(rcTimer);clearSess();warnMsg('The other device disconnected.');status('disconnected');return;}
+    if(m.t==='ack'){sendAck=Math.max(sendAck,+m.n||0);sendAckAt=Date.now();return;}
     if(m.t==='hello'){gotHello(m);return;}
     if(m.t==='proof'){if(peerInfo&&peerInfo.id&&devs[peerInfo.id]&&devs[peerInfo.id].key===m.key){peerInfo.paired=true;showPeer();}return;}
     if(m.t==='pair'){if(peerInfo&&peerInfo.id&&$('#remember').checked&&/^[0-9a-f]{32}$/.test(m.key)){devs[peerInfo.id]={name:peerInfo.name,plat:peerInfo.plat,key:m.key,last:Date.now()};saveDevs();peerInfo.paired=true;showPeer();}return;}
@@ -416,18 +436,20 @@ function onMsg(e){
       row.innerHTML='<div></div><progress max="'+m.size+'" value="0"></progress>';row.firstChild.textContent=label;
       if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
       $('#inbox').prepend(row);
-      const r=rx={m,path,base,parts:[],got:0,row,t0:performance.now(),lu:0,label,disk:!!saveDir,w:null,err:null,q:Promise.resolve()};
+      const r=rx={m,path,base,parts:[],blobs:[],pb:0,acked:0,got:0,row,t0:performance.now(),lu:0,label,disk:!!saveDir,w:null,err:null,q:Promise.resolve()};
       if(r.disk)r.q=(async()=>{let d=saveDir;for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
         r.w=await(await d.getFileHandle(base,{create:true})).createWritable();})().catch(x=>{r.err=x;});
     }else if(m.t==='end'&&rx){
       const r=rx;rx=null;
       if(r.disk)r.q=r.q.then(()=>r.w&&r.w.close()).then(()=>{if(r.err||!r.w)throw 1;finishRx(r,null);})
         .catch(()=>{r.row.firstChild.textContent=r.label+' — could not save to folder';stats.failed++;renderStats();});
-      else finishRx(r,new Blob(r.parts,{type:r.m.type||guessMime(r.base)}));
+      else finishRx(r,new Blob([...r.blobs,...r.parts],{type:r.m.type||guessMime(r.base)}));
     }
   }else if(rx){
     const r=rx,d=e.data;r.got+=d.byteLength;
-    if(r.disk)r.q=r.q.then(()=>r.w&&r.w.write(d));else r.parts.push(d);
+    if(r.disk)r.q=r.q.then(()=>r.w&&r.w.write(d));
+    else{r.parts.push(d);r.pb+=d.byteLength;if(r.pb>=8*1048576){r.blobs.push(new Blob(r.parts));r.parts=[];r.pb=0;}}   // hand data to the Blob store so the JS heap stays small
+    if(peerInfo&&peerInfo.v>=3&&r.got-r.acked>=1048576){r.acked=r.got;sendJ({t:'ack',n:r.got});}
     const n=performance.now();
     if(n-r.lu>250){r.lu=n;r.row.querySelector('progress').value=r.got;r.row.firstChild.textContent=r.label+' · '+speed(r.got,n-r.t0)+left(r.got,r.m.size,n-r.t0);}
   }
@@ -504,14 +526,16 @@ async function send(f,i,n){
     if(!dc||dc.readyState!=='open')return fail();
     const ch=dc;
     ch.send(JSON.stringify({t:'meta',name:f.name,size:f.size,type:f.type,path:pth,i,n,b:batchId}));
-    const mm=(pc&&pc.sctp&&pc.sctp.maxMessageSize)||65536,CH=Math.max(16384,Math.min(131072,mm));
+    const mm=(pc&&pc.sctp&&pc.sctp.maxMessageSize)||65536,toIOS=!!(peerInfo&&peerInfo.plat==='iOS'),CH=Math.max(16384,Math.min(toIOS?65536:131072,mm));
+    const win=(peerInfo&&peerInfo.v>=3)?(toIOS?4:8)*1048576:0;let sentB=0;sendAck=0;sendAckAt=Date.now();
     for(let o=0;o<f.size;o+=BLOCK){
       const buf=await f.slice(o,o+BLOCK).arrayBuffer();
       for(let k=0;k<buf.byteLength;k+=CH){
         if(ch.readyState!=='open')return fail();
         if(ch.bufferedAmount>HIGH)await new Promise(r=>{let iv;const fin=()=>{clearInterval(iv);ch.onbufferedamountlow=null;r();};iv=setInterval(()=>{if(ch.readyState!=='open')fin();},500);ch.onbufferedamountlow=fin;});
         if(ch.readyState!=='open')return fail();
-        ch.send(new Uint8Array(buf,k,Math.min(CH,buf.byteLength-k)));
+        if(win)while(sentB-sendAck>win){if(ch.readyState!=='open'||Date.now()-sendAckAt>30000)return fail();await sleep(15);}
+        ch.send(new Uint8Array(buf,k,Math.min(CH,buf.byteLength-k)));sentB+=Math.min(CH,buf.byteLength-k);
       }
       const done=Math.min(o+BLOCK,f.size);
       row.querySelector('progress').value=done;
@@ -644,7 +668,7 @@ function friendlyErr(e){
   return 'Could not save ('+(n||'error')+'): '+m;
 }
 function showFallback(label,fn){const b=$('#shFb');b.textContent=label;b.hidden=false;b.onclick=()=>{b.hidden=true;runSave(fn);};}
-var lastSave=0;
+var lastSave=0,sendAck=0,sendAckAt=0;
 const recentSave=()=>sheetBusy||Date.now()-lastSave<180000;
 async function runSave(fn){
   if(sheetBusy)return;
@@ -654,7 +678,9 @@ async function runSave(fn){
   finally{sheetBusy=false;lastSave=Date.now();}
 }
 const asFiles=l=>l.map(f=>new File([f.blob],f.base,{type:mimeOf(f)}));
-function planBatches(items){
+const IOS_PHOTOS=/\.(jpe?g|png|gif|heic|heif|mp4|m4v|mov|tiff?)$/i;
+function planBatches(items,one){
+  if(one)return items.map(i=>[i]);
   const ios=PLAT==='iOS',MAXN=ios?8:25,MAXB=ios?80e6:300e6,out=[];let cur=[],sz=0;
   for(const it of items){if(cur.length&&(cur.length>=MAXN||sz+it.size>MAXB)){out.push(cur);cur=[];sz=0;}cur.push(it);sz+=it.size;}
   if(cur.length)out.push(cur);return out;
@@ -665,34 +691,48 @@ async function downloadAll(list){
   sheetMsg('✓ '+n+' file'+(n>1?'s':'')+' saved to your Downloads'+(PLAT==='Android'?' — they also show up in your Gallery.':'.'),1);
 }
 async function shareBatch(list){await navigator.share({files:asFiles(list)});list.forEach(markDl);}
-async function saveToGallery(media){
-  const can=!!(navigator.share&&navigator.canShare),files=asFiles(media);
-  const ok=can?media.filter((it,i)=>{try{return navigator.canShare({files:[files[i]]});}catch(e){return false;}}):[];
-  const other=media.filter(it=>!ok.includes(it));
-  if(!ok.length){await downloadAll(media);return;}
-  const batches=planBatches(ok);
-  if(batches.length===1){
-    try{await shareBatch(batches[0]);}catch(e){if(e&&e.name==='AbortError')return;sheetMsg(friendlyErr(e));showFallback('Download to this device instead',()=>downloadAll(media));return;}
-    sheetMsg('✓ Done — '+batches[0].length+' item'+(batches[0].length>1?'s':'')+' sent to your gallery app.',1);
-    if(other.length)await downloadAll(other);
-    return;
-  }
-  // big selections: one button per group so every share gets its own tap (phones need that)
-  const box=$('#shOpts');box.textContent='';let at=0;
-  sheetMsg('Large selection — saved in '+batches.length+' groups. Tap each group below.');
+function renderGroups(batches,total,one){
+  const box=$('#shOpts');box.textContent='';let at=0;$('#shFb').hidden=true;
+  sheetMsg(one?'Tap each item to save it.':'Large selection — saved in '+batches.length+' groups. Tap each group below.');
   batches.forEach((b,i)=>{
     const btn=document.createElement('button');btn.className='opt';
     btn.innerHTML='<span class="ic">🖼</span><span><span class="t"></span><small></small></span>';
-    btn.querySelector('.t').textContent='Save group '+(i+1)+' of '+batches.length;
-    btn.querySelector('small').textContent=b.length+' item'+(b.length>1?'s':'')+' · '+fmt(b.reduce((a,f)=>a+f.size,0));
+    btn.querySelector('.t').textContent=one?'Save '+b[0].base:'Save group '+(i+1)+' of '+batches.length;
+    btn.querySelector('small').textContent=one?fmt(b[0].size):b.length+' item'+(b.length>1?'s':'')+' · '+fmt(b.reduce((a,f)=>a+f.size,0));
     btn.onclick=()=>runSave(async()=>{
       try{await shareBatch(b);}catch(e){if(e&&e.name==='AbortError')return;throw e;}
-      btn.disabled=true;btn.querySelector('small').textContent='✓ Saved';btn.style.opacity='.6';
-      if(++at===batches.length)sheetMsg('✓ All '+media.length+' items sent to your gallery app.',1);else sheetMsg('✓ Group '+(i+1)+' done — '+(batches.length-at)+' to go.',at/batches.length);
+      btn.disabled=true;btn.style.opacity='.6';btn.querySelector('small').textContent='✓ Saved';
+      if(++at===batches.length)sheetMsg('✓ All '+total+' items sent to your gallery app.',1);else sheetMsg('✓ '+at+' done — '+(batches.length-at)+' to go.',at/batches.length);
     });
     box.appendChild(btn);
   });
-  if(other.length){const o=mkBtn('Download '+other.length+' other file'+(other.length>1?'s':'')+' to this device',()=>runSave(()=>downloadAll(other)));box.appendChild(o);}
+}
+async function saveToGallery(media){
+  const ios=PLAT==='iOS';
+  const bad=ios?media.filter(it=>!IOS_PHOTOS.test(it.base)):[];          // iPhone Photos can't store WebP / WebM / MKV / 3GP…
+  media=media.filter(it=>!bad.includes(it));
+  const badBtn=()=>mkBtn('Save '+bad.length+' file'+(bad.length>1?'s':'')+' Photos can’t store (WebP/WebM…) to Files',()=>runSave(()=>shareBatch(bad)));
+  if(!media.length){sheetMsg('iPhone Photos can’t store these formats — save them to Files instead.');if(bad.length)$('#shOpts').appendChild(badBtn());return;}
+  const can=!!(navigator.share&&navigator.canShare),files=asFiles(media);
+  const ok=can?media.filter((it,i)=>{try{return navigator.canShare({files:[files[i]]});}catch(e){return false;}}):[];
+  const other=media.filter(it=>!ok.includes(it));
+  if(!ok.length){await downloadAll(media);if(bad.length)$('#shOpts').appendChild(badBtn());return;}
+  const batches=planBatches(ok);
+  if(batches.length===1){
+    try{await shareBatch(batches[0]);}
+    catch(e){
+      if(e&&e.name==='AbortError')return;
+      sheetMsg(friendlyErr(e));
+      showFallback(ios?'Try saving one at a time':'Download to this device instead',ios?()=>renderGroups(planBatches(ok,true),ok.length,true):()=>downloadAll(media));return;
+    }
+    sheetMsg('✓ Done — '+batches[0].length+' item'+(batches[0].length>1?'s':'')+' sent to your gallery app.',1);
+    if(other.length)await downloadAll(other);
+    if(bad.length)$('#shOpts').appendChild(badBtn());
+    return;
+  }
+  renderGroups(batches,media.length,false);
+  if(other.length)$('#shOpts').appendChild(mkBtn('Download '+other.length+' other file'+(other.length>1?'s':'')+' to this device',()=>runSave(()=>downloadAll(other))));
+  if(bad.length)$('#shOpts').appendChild(badBtn());
 }
 async function saveToFolder(items,zipName){
   const mode=folderMode();
