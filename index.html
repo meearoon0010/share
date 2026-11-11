@@ -26,6 +26,7 @@ video{width:100%;border-radius:10px;background:#000}
 progress{width:100%;height:8px}.m{color:var(--mu);font-size:13px}[hidden]{display:none!important}
 @media(min-width:800px){main{max-width:640px}}
 .drag{outline:2px dashed var(--ac);outline-offset:4px}
+.tx{width:100%;margin-top:6px;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font:inherit}
 .opt{display:flex;gap:14px;align-items:center;text-align:left;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-top:10px;width:100%;font:inherit;font-weight:600;cursor:pointer}
 .opt .ic{font-size:26px}.opt small{display:block;color:var(--mu);font-weight:400;font-size:13px;margin-top:2px}
 ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
@@ -54,6 +55,10 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
     <label class="m" style="display:block;margin-top:8px"><input type="checkbox" id="recvOn" checked> Receiving on (turn off to decline everything)</label>
     <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="autoAcc"> Auto-accept files from my devices</label>
     <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="remember" checked> Remember devices I connect to</label>
+    <div class="m" style="margin-top:12px"><b>Relay server (optional)</b><br>Only for networks that block direct phone-to-phone links. Needs a TURN service; setting it on one device is usually enough.</div>
+    <input id="turnUrl" class="tx" placeholder="turn:your-server.com:3478" autocapitalize="none" spellcheck="false">
+    <input id="turnUser" class="tx" placeholder="username" autocapitalize="none" spellcheck="false">
+    <input id="turnCred" class="tx" type="password" placeholder="password">
   </details>
 </section>
 
@@ -229,7 +234,7 @@ function drawQR(el,msg,code){
 
 // ---- WebRTC ----
 function mk(){
-  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+  pc=new RTCPeerConnection(iceCfg());
   watchPc(pc);
   pc.ondatachannel=e=>wire(e.channel);
 }
@@ -238,9 +243,20 @@ let dTimer=null,slowT=null,unlockStream=null;
 async function unlockIPs(){
   stopUnlock();
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return;
-  const ask=c=>Promise.race([navigator.mediaDevices.getUserMedia(c),new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),20000))]);
-  try{unlockStream=await ask({video:true});}catch(e){try{unlockStream=await ask({audio:true});}catch(e2){}}
+  const ask=c=>new Promise((res,rej)=>{
+    let late=false;const t=setTimeout(()=>{late=true;rej(new Error('timeout'));},10000);
+    navigator.mediaDevices.getUserMedia(c).then(st=>{clearTimeout(t);if(late)st.getTracks().forEach(x=>x.stop());else res(st);},e=>{clearTimeout(t);if(!late)rej(e);});
+  });
+  try{unlockStream=await ask({video:true});}
+  catch(e){if(e&&e.name==='NotFoundError'){try{unlockStream=await ask({audio:true});}catch(e2){}}}
 }
+function iceCfg(){
+  const s=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
+  try{const t=JSON.parse(localStorage.getItem('dt-turn')||'null');
+    if(t&&t.url)s.push({urls:t.url.split(/[\s,]+/).filter(Boolean),username:t.user||undefined,credential:t.cred||undefined});}catch(e){}
+  return{iceServers:s};
+}
+const mkPeer=id=>new Peer(id||undefined,{config:iceCfg()});
 function stopUnlock(){if(unlockStream){try{unlockStream.getTracks().forEach(t=>t.stop());}catch(e){}unlockStream=null;}}
 function candMsg(d){
   let host=0,mdns=0,pub=0;
@@ -259,6 +275,8 @@ function watchPc(me){
       $('#qrinfo').textContent=t;$('#qrinfo2').textContent=t;status('connecting is slow');}},25000);}
     if(s==='connected'){clearTimeout(dTimer);clearTimeout(slowT);stopUnlock();view('xfer');}
     if(s==='disconnected'){clearTimeout(dTimer);dTimer=setTimeout(()=>{if(me===pc&&me.connectionState!=='connected')dropped();},8000);}
+    if(s==='failed'){const t='Could not connect directly. Both phones must be on the same normal Wi-Fi (not a guest network) with VPN / iCloud Private Relay off — or use the short code, a phone hotspot, or add a relay server in Settings. On iPhone with Chrome: allow Local Network in Settings → Chrome.';
+      $('#qrinfo').textContent=t;$('#qrinfo2').textContent=t;status('connection failed');}
     if(s==='failed'||s==='closed')dropped();
   };
 }
@@ -269,16 +287,22 @@ const gathered=()=>new Promise(r=>{
 });
 
 $('#bStart').onclick=async()=>{
-  newSession('h');await unlockIPs();mk();wire(pc.createDataChannel('files'));status('creating code…');view('host');
+  newSession('h');view('host');status('allow camera access…');
+  $('#hScan').disabled=true;$('#hApply').disabled=true;$('#qr').textContent='';$('#hOffer').value='';$('#qrinfo').textContent='';
+  $('#qrmsg').textContent='Allow camera access when asked — it helps the phones find each other on Wi-Fi.';
+  await unlockIPs();mk();wire(pc.createDataChannel('files'));status('creating code…');$('#qrmsg').textContent='Creating code…';
   await pc.setLocalDescription(await pc.createOffer());await gathered();
   const cd=compact(pc.localDescription),c=await pack(cd);
-  $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);$('#qrinfo').textContent=candMsg(cd);status('waiting for reply');
+  $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);$('#qrinfo').textContent=candMsg(cd);status('waiting for reply');$('#hScan').disabled=false;$('#hApply').disabled=false;
 };
-$('#hScan').onclick=()=>scan(c=>applyAnswer(c));
+$('#hScan').onclick=()=>scan(c=>{stopUnlock();applyAnswer(c);});
 $('#hApply').onclick=()=>applyAnswer($('#hAns').value);
 async function applyAnswer(c){try{await pc.setRemoteDescription(expand(await unpack(c)));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
 
-$('#bJoin').onclick=async()=>{newSession('g');await unlockIPs();mk();view('join');};
+$('#bJoin').onclick=async()=>{
+  newSession('g');view('join');status('allow camera access…');$('#jScan').disabled=true;$('#jApply').disabled=true;$('#jOut').hidden=true;
+  await unlockIPs();mk();$('#jScan').disabled=false;$('#jApply').disabled=false;status('ready — scan the other device');
+};
 $('#jScan').onclick=()=>scan(c=>makeAnswer(c));
 $('#jApply').onclick=()=>makeAnswer($('#jOffer').value);
 async function makeAnswer(c){
@@ -288,11 +312,12 @@ async function makeAnswer(c){
     await pc.setLocalDescription(await pc.createAnswer());status('creating reply…');await gathered();
     const cd=compact(pc.localDescription),a=await pack(cd);
     $('#jOut').hidden=false;$('#jAns').value=a;drawQR($('#qr2'),$('#qrmsg2'),a);$('#qrinfo2').textContent=candMsg(cd);status('show reply to other device');
-  }catch(e){alert('Invalid code. Try again.');}
+  }catch(e){stopUnlock();alert('Invalid code. Try again.');}
 }
 
 // ---- camera scanner ----
 async function scan(cb){
+  stopUnlock();
   try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});}
   catch(e){alert('Camera unavailable. Paste the code instead.');return;}
   const v=$('#vid');v.srcObject=cam;await v.play();view('scanbox');
@@ -306,12 +331,13 @@ async function scan(cb){
       if(!d){c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0);
         const r=jsQR(x.getImageData(0,0,c.width,c.height).data,c.width,c.height,{inversionAttempts:'dontInvert'});
         if(r&&r.data)d=r.data;}
-      if(d){stopCam();cb(d);return;}
+      if(d){keepCam();cb(d);return;}
     }
     requestAnimationFrame(tick);
   };
   tick();
 }
+function keepCam(){if(cam){stopUnlock();unlockStream=cam;cam=null;try{$('#vid').srcObject=null;}catch(e){}}}
 function stopCam(){if(cam){cam.getTracks().forEach(t=>t.stop());cam=null;}}
 $('#scanX').onclick=()=>{stopCam();view(pc&&pc.localDescription&&pc.localDescription.type==='offer'?'host':'join');};
 
@@ -570,7 +596,7 @@ function useConn(c){
   c.on('error',e=>alert('Connection error: '+e.type));
 }
 function hostCode(){
-  const code=newCode();peer=new Peer('dt-'+code);status('getting code…');
+  const code=newCode();peer=mkPeer('dt-'+code);status('getting code…');
   peer.on('open',()=>{$('#myCode').textContent=code.slice(0,3)+' '+code.slice(3);status('waiting for other device');});
   peer.on('connection',useConn);
   peer.on('error',e=>{if(e.type==='unavailable-id'){try{peer.destroy()}catch(x){}hostCode();}else alert('Could not reach the code service ('+e.type+'). Check your internet.');});
@@ -581,7 +607,7 @@ $('#cShow').onclick=async()=>{newSession('h');endPc();await unlockIPs();$('#cSho
 $('#cGo').onclick=async()=>{
   const code=$('#cIn').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(code.length!==6)return alert('Enter the 6-character code.');
-  newSession('g');endPc();status('connecting…');await unlockIPs();peer=new Peer();
+  newSession('g');endPc();status('connecting…');await unlockIPs();peer=mkPeer();
   peer.on('open',()=>{useConn(peer.connect('dt-'+code,{reliable:true}));
     setTimeout(()=>{if($('#st').textContent==='connecting…')status('not connected');},15000);});
   peer.on('error',e=>{status('not connected');alert(e.type==='peer-unavailable'?'Code not found. Check it and try again.':'Could not connect ('+e.type+').');});
@@ -908,6 +934,8 @@ function showPeer(){$('#peerLine').textContent=peerInfo?'Connected to '+icon(pee
 $('#devName').value=LS.get('dt-name','');
 $('#recvOn').checked=LS.get('dt-recv','1')==='1';$('#autoAcc').checked=LS.get('dt-auto','0')==='1';$('#remember').checked=LS.get('dt-rem','1')==='1';
 $('#devName').oninput=e=>LS.set('dt-name',e.target.value);
+try{const t=JSON.parse(LS.get('dt-turn','null'));if(t){$('#turnUrl').value=t.url||'';$('#turnUser').value=t.user||'';$('#turnCred').value=t.cred||'';}}catch(e){}
+['turnUrl','turnUser','turnCred'].forEach(id=>$('#'+id).oninput=()=>LS.set('dt-turn',JSON.stringify({url:$('#turnUrl').value.trim(),user:$('#turnUser').value.trim(),cred:$('#turnCred').value})));
 $('#recvOn').onchange=e=>{LS.set('dt-recv',e.target.checked?'1':'0');e.target.checked?startListening():stopListening();};
 $('#autoAcc').onchange=e=>LS.set('dt-auto',e.target.checked?'1':'0');
 $('#remember').onchange=e=>LS.set('dt-rem',e.target.checked?'1':'0');
@@ -941,7 +969,7 @@ let lp=null,lpTimer=null;
 function startListening(){
   stopListening();
   if(!$('#recvOn').checked||typeof Peer==='undefined'||!Object.keys(devs).length)return;
-  const p=lp=new Peer('dtd-'+myId);
+  const p=lp=mkPeer('dtd-'+myId);
   p.on('connection',handleDial);
   p.on('disconnected',()=>{if(p===lp&&!p.destroyed){try{p.reconnect();}catch(e){}}});
   p.on('error',e=>{if(p!==lp)return;clearTimeout(lpTimer);lpTimer=setTimeout(startListening,e.type==='unavailable-id'?5000:15000);});
@@ -963,7 +991,7 @@ async function connectDevice(id){
   const d=devs[id];if(!d)return;
   newSession('g');await unlockIPs();try{peer&&peer.destroy();}catch(e){}
   status('connecting to '+d.name+'…');
-  const p=peer=new Peer();let finished=false;
+  const p=peer=mkPeer();let finished=false;
   const fail=t=>{if(finished)return;finished=true;status('not connected');alert(t);try{p.destroy();}catch(e){}};
   const to=setTimeout(()=>fail(d.name+' did not answer. Make sure the app is open on it with Receiving on.'),20000);
   p.on('open',()=>{
@@ -1043,7 +1071,7 @@ function resume(){
     tries++;
     warnMsg(navigator.onLine===false?'You are offline — will reconnect as soon as internet returns…':tries<4?(recentSave()?'Paused while saving — reconnecting automatically… Your files are safe on this device.':'Connection lost — reconnecting automatically… (tap Disconnect to connect to a different device)'):'Still trying to reconnect… The other device must be open and online too. Tap Disconnect to start over with QR or a code.');
     try{peer&&peer.destroy();}catch(e){}
-    const p=peer=new Peer(me);
+    const p=peer=mkPeer(me);
     p.on('open',()=>{
       if(my!==attemptId||p!==peer)return;
       if(sess.role==='g'){const c=p.connect(other,{reliable:true});c.on('open',()=>done(c));c.on('error',retry);}
