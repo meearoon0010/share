@@ -40,10 +40,13 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 
 <section id="home" class="card">
   <b>Connect two devices</b> <span class="m">(phone ↔ phone, phone ↔ PC, iPhone ↔ Android)</span>
-  <ol><li>Open this page on both devices (same Wi-Fi works best).</li><li>One taps <i>Start</i>, the other taps <i>Join</i>.</li><li>Scan each other's QR code, once each way.</li></ol>
-  <button id="bStart">Start (show my QR first)</button>
-  <button class="g" id="bJoin">Join (scan the other device)</button>
-  <button class="g toCode">QR not working? Use a short code</button>
+  <p class="m" style="margin:6px 0 0">Open this page on both devices. One shows a code, the other types it. Both need internet for this step.</p>
+  <button id="cShow">🔢 Show a code on this device</button>
+  <div id="cShowBox" hidden style="text-align:center"><div id="myCode" style="font:700 40px/1.3 monospace;letter-spacing:4px">…</div><div class="m">Type this code on the other device</div></div>
+  <b style="display:block;margin-top:14px">Or enter the code shown on the other device</b>
+  <textarea id="cIn" style="height:auto;font:700 24px monospace;text-align:center;letter-spacing:4px" rows="1" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC 123"></textarea>
+  <button id="cGo">Connect</button>
+  <div id="connHint" class="m" style="margin-top:8px"></div>
   <div id="devWrap" hidden>
     <b style="display:block;margin-top:16px">📡 My devices</b>
     <div class="m">Tap Connect — no QR or code needed. Open this app on the other device too.</div>
@@ -55,54 +58,15 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
     <label class="m" style="display:block;margin-top:8px"><input type="checkbox" id="recvOn" checked> Receiving on (turn off to decline everything)</label>
     <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="autoAcc"> Auto-accept files from my devices</label>
     <label class="m" style="display:block;margin-top:6px"><input type="checkbox" id="remember" checked> Remember devices I connect to</label>
+    <label class="m" style="display:block;margin-top:10px"><input type="checkbox" id="autoSave" checked> <b>Auto-save received files</b></label>
+    <div class="m" id="autoHelp" style="margin:2px 0 0 22px"></div>
+    <button class="g" id="autoDir" hidden style="margin-top:6px;padding:8px;font-size:14px">📁 Choose auto-save folder…</button>
+    <button class="g" id="autoDirClear" hidden style="margin-top:6px;padding:8px;font-size:14px">Stop using this folder</button>
     <div class="m" style="margin-top:12px"><b>Relay server (optional)</b><br>Only for networks that block direct phone-to-phone links. Needs a TURN service; setting it on one device is usually enough.</div>
     <input id="turnUrl" class="tx" placeholder="turn:your-server.com:3478" autocapitalize="none" spellcheck="false">
     <input id="turnUser" class="tx" placeholder="username" autocapitalize="none" spellcheck="false">
     <input id="turnCred" class="tx" type="password" placeholder="password">
   </details>
-</section>
-
-<section id="host" class="card" hidden>
-  <b>Step 1 · Let the other device scan this</b>
-  <div id="qr"></div><div class="m" id="qrmsg"></div><div class="m" id="qrinfo"></div>
-  <textarea id="hOffer" readonly></textarea>
-  <button class="g" data-copy="hOffer">Copy code</button>
-  <b style="display:block;margin-top:14px">Step 2 · Scan its reply</b>
-  <button id="hScan">Scan reply QR</button>
-  <textarea id="hAns" placeholder="…or paste reply code here"></textarea>
-  <button class="g" id="hApply">Connect with pasted code</button>
-  <button class="g toCode">QR not working? Use a short code</button>
-</section>
-
-<section id="join" class="card" hidden>
-  <b>Step 1 · Scan the first device's QR</b>
-  <button id="jScan">Scan QR</button>
-  <textarea id="jOffer" placeholder="…or paste its code here"></textarea>
-  <button class="g" id="jApply">Use pasted code</button>
-  <button class="g toCode">QR not working? Use a short code</button>
-  <div id="jOut" hidden>
-    <b style="display:block;margin-top:14px">Step 2 · Show this to the first device</b>
-    <div id="qr2"></div><div class="m" id="qrmsg2"></div><div class="m" id="qrinfo2"></div>
-    <textarea id="jAns" readonly></textarea>
-    <button class="g" data-copy="jAns">Copy reply code</button>
-  </div>
-</section>
-
-<section id="code" class="card" hidden>
-  <b>Connect with a short code</b>
-  <p class="m" style="margin:4px 0 0">Both devices need internet for this step. Files still go directly between the phones.</p>
-  <button id="cShow">Show a code on this device</button>
-  <div id="cShowBox" hidden style="text-align:center"><div id="myCode" style="font:700 40px/1.3 monospace;letter-spacing:4px">…</div><div class="m">Type this code on the other device</div></div>
-  <b style="display:block;margin-top:14px">Or enter the code shown on the other device</b>
-  <textarea id="cIn" style="height:auto;font:700 24px monospace;text-align:center;letter-spacing:4px" rows="1" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC 123"></textarea>
-  <button id="cGo">Connect</button>
-  <button class="g" id="cBack">Back</button>
-</section>
-
-<section id="scanbox" class="card" hidden>
-  <video id="vid" playsinline muted></video>
-  <button class="g" id="scanX">Cancel</button>
-  <button class="g toCode">QR not working? Use a short code</button>
 </section>
 
 <section id="xfer" class="card" hidden>
@@ -125,6 +89,7 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
   <div id="slotX"><div id="recvBox">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px"><b>Received</b>
     <button id="clearAll" class="g" hidden style="width:auto;margin:0;padding:4px 10px;font-size:13px;border:0">Clear all</button></div>
+  <div id="autoBar" hidden style="border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:10px"></div>
   <div id="saveBar" hidden><button id="saveAll">⬇ Save all</button><div id="saveSub" class="m" style="text-align:center;margin-top:4px"></div></div>
   <div id="folders"></div>
   <div id="inbox" class="m">Nothing yet.</div>
@@ -165,7 +130,6 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
       <button id="shClose" class="g" style="width:auto;margin:0;padding:4px 12px;border:0">✕</button></div>
     <div class="m" id="shSub"></div>
     <div id="shOpts"></div>
-    <label id="shAutoWrap" class="m" hidden style="display:block;margin-top:12px"><input type="checkbox" id="shAuto"> Also save future files to this folder automatically</label>
     <div id="shMsg" class="m" style="margin-top:12px"></div>
     <button id="shFb" class="g" hidden style="margin-top:8px"></button>
     <progress id="shProg" hidden max="1" value="0"></progress>
@@ -181,165 +145,63 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
 <p class="m"><b>For top speed:</b> put both phones on the same 5 GHz Wi-Fi, or turn on one phone's hotspot and join it from the other (works with no internet). Keep both screens on. Files over ~1 GB may fail on iPhone due to memory limits.</p>
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 const BLOCK=2*1024*1024,HIGH=12*1024*1024;
 let pc,dc,cam,rx=null;
 
-const show=id=>{for(const s of ['home','host','join','code','scanbox','xfer','lib'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
-const view=(...ids)=>{for(const s of ['home','host','join','code','scanbox','xfer','lib'])$('#'+s).hidden=!ids.includes(s);
+const show=id=>{for(const s of ['home','xfer','lib'])$('#'+s).hidden=(s!==id&&!(id==='host'&&0))};
+const view=(...ids)=>{for(const s of ['home','xfer','lib'])$('#'+s).hidden=!ids.includes(s);
   const slot=$(ids.includes('lib')?'#slotL':'#slotX');if(slot&&$('#recvBox').parentNode!==slot)slot.appendChild($('#recvBox'));
   keepAlive(ids.includes('xfer')&&$('#bg').checked);
   if(ids.includes('xfer'))setTimeout(pathInfo,1500);};
 const status=t=>{$('#st').textContent=t;$('#st').className='pill'+(t==='connected'?' ok':'')};
 
 // ---- encode/decode signalling (compressed + base64url) ----
-async function pack(o){
-  let b=new TextEncoder().encode(JSON.stringify(o)),p='r';
-  if(window.CompressionStream){
-    b=new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());p='z';
-  }
-  let s='';b.forEach(x=>s+=String.fromCharCode(x));
-  return p+btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-}
-async function unpack(str){
-  str=str.trim();const p=str[0];
-  let b=Uint8Array.from(atob(str.slice(1).replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
-  if(p==='z')b=new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
-  return JSON.parse(new TextDecoder().decode(b));
-}
 
 // ---- compact SDP: send only what a data-channel connection needs (keeps QR small & scannable) ----
-function compact(d){
-  const g=r=>(d.sdp.match(r)||[])[1]||'';
-  const c=[...d.sdp.matchAll(/^a=candidate:(.*)$/gm)].map(m=>m[1].trim())
-    .filter(x=>!/ tcp /i.test(x)&&!/ [0-9a-f]*:[0-9a-f:]+ \d+ typ/i.test(x));
-  return {y:d.type,u:g(/a=ice-ufrag:(.*)/),p:g(/a=ice-pwd:(.*)/),f:g(/a=fingerprint:sha-256 (.*)/).trim(),c};
-}
-function expand(o){
-  const L=['v=0','o=- 1 2 IN IP4 127.0.0.1','s=-','t=0 0','a=group:BUNDLE 0',
-    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel','c=IN IP4 0.0.0.0',
-    'a=ice-ufrag:'+o.u,'a=ice-pwd:'+o.p,'a=fingerprint:sha-256 '+o.f,
-    'a=setup:'+(o.y==='offer'?'actpass':'active'),'a=mid:0','a=sctp-port:5000','a=max-message-size:262144',
-    ...o.c.map(x=>'a=candidate:'+x),'a=end-of-candidates'];
-  return {type:o.y,sdp:L.join('\r\n')+'\r\n'};
-}
-function drawQR(el,msg,code){
-  try{const q=qrcode(0,'L');q.addData(code);q.make();el.innerHTML='<img src="'+q.createDataURL(4,4)+'" alt="QR">';msg.textContent='';}
-  catch(e){el.innerHTML='';msg.textContent='Code too long for a QR here — use Copy code and paste it on the other device.';}
-}
 
 // ---- WebRTC ----
-function mk(){
-  pc=new RTCPeerConnection(iceCfg());
-  watchPc(pc);
-  pc.ondatachannel=e=>wire(e.channel);
-}
 let dTimer=null,slowT=null,unlockStream=null;
 // Browsers hide real local IP addresses (mDNS) until camera/mic permission is granted — which breaks Wi-Fi connections on many routers.
 async function unlockIPs(){
   stopUnlock();
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return;
   const ask=c=>new Promise((res,rej)=>{
-    let late=false;const t=setTimeout(()=>{late=true;rej(new Error('timeout'));},10000);
+    let late=false;const t=setTimeout(()=>{late=true;rej(new Error('timeout'));},6000);
     navigator.mediaDevices.getUserMedia(c).then(st=>{clearTimeout(t);if(late)st.getTracks().forEach(x=>x.stop());else res(st);},e=>{clearTimeout(t);if(!late)rej(e);});
   });
   try{unlockStream=await ask({video:true});}
   catch(e){if(e&&e.name==='NotFoundError'){try{unlockStream=await ask({audio:true});}catch(e2){}}}
 }
 function iceCfg(){
-  const s=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
+  const s=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun.cloudflare.com:3478']},
+    {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478'],username:'peerjs',credential:'peerjsp'}];   // PeerJS's built-in relays (we had overridden them!)
   try{const t=JSON.parse(localStorage.getItem('dt-turn')||'null');
     if(t&&t.url)s.push({urls:t.url.split(/[\s,]+/).filter(Boolean),username:t.user||undefined,credential:t.cred||undefined});}catch(e){}
   return{iceServers:s};
 }
 const mkPeer=id=>new Peer(id||undefined,{config:iceCfg()});
 function stopUnlock(){if(unlockStream){try{unlockStream.getTracks().forEach(t=>t.stop());}catch(e){}unlockStream=null;}}
-function candMsg(d){
-  let host=0,mdns=0,pub=0;
-  for(const x of (d.c||[])){const t=(x.match(/ typ (\w+)/)||[])[1];if(t==='host'){host++;if(/\.local \d+ typ/.test(x))mdns++;}else if(t==='srflx')pub++;}
-  const real=host-mdns;
-  let t='Network addresses found: '+real+' local'+(mdns?', '+mdns+' hidden':'')+', '+pub+' public.';
-  if(!real)t+=' ⚠ No usable local address — on Wi-Fi this can stop devices finding each other. Allow camera access and try again, or use the short code or a hotspot.';
-  return t;
-}
 function watchPc(me){
   me.onconnectionstatechange=()=>{
     if(me!==pc)return;
     const s=me.connectionState;status(s==='connected'?'connected':s);
     if(s==='connecting'){clearTimeout(slowT);slowT=setTimeout(()=>{if(me===pc&&me.connectionState!=='connected'){
       const t='Still connecting… Your Wi-Fi may block device-to-device traffic (guest network / AP isolation). Try the short code, or use a phone hotspot.';
-      $('#qrinfo').textContent=t;$('#qrinfo2').textContent=t;status('connecting is slow');}},25000);}
+      hint(t);status('connecting is slow');}},25000);}
     if(s==='connected'){clearTimeout(dTimer);clearTimeout(slowT);stopUnlock();view('xfer');}
     if(s==='disconnected'){clearTimeout(dTimer);dTimer=setTimeout(()=>{if(me===pc&&me.connectionState!=='connected')dropped();},8000);}
     if(s==='failed'){const t='Could not connect directly. Both phones must be on the same normal Wi-Fi (not a guest network) with VPN / iCloud Private Relay off — or use the short code, a phone hotspot, or add a relay server in Settings. On iPhone with Chrome: allow Local Network in Settings → Chrome.';
-      $('#qrinfo').textContent=t;$('#qrinfo2').textContent=t;status('connection failed');}
+      hint(t);status('connection failed');}
     if(s==='failed'||s==='closed')dropped();
   };
 }
-const gathered=()=>new Promise(r=>{
-  if(pc.iceGatheringState==='complete')return r();
-  pc.onicegatheringstatechange=()=>pc.iceGatheringState==='complete'&&r();
-  setTimeout(r,4000);
-});
 
-$('#bStart').onclick=async()=>{
-  newSession('h');view('host');status('allow camera access…');
-  $('#hScan').disabled=true;$('#hApply').disabled=true;$('#qr').textContent='';$('#hOffer').value='';$('#qrinfo').textContent='';
-  $('#qrmsg').textContent='Allow camera access when asked — it helps the phones find each other on Wi-Fi.';
-  await unlockIPs();mk();wire(pc.createDataChannel('files'));status('creating code…');$('#qrmsg').textContent='Creating code…';
-  await pc.setLocalDescription(await pc.createOffer());await gathered();
-  const cd=compact(pc.localDescription),c=await pack(cd);
-  $('#hOffer').value=c;drawQR($('#qr'),$('#qrmsg'),c);$('#qrinfo').textContent=candMsg(cd);status('waiting for reply');$('#hScan').disabled=false;$('#hApply').disabled=false;
-};
-$('#hScan').onclick=()=>scan(c=>{stopUnlock();applyAnswer(c);});
-$('#hApply').onclick=()=>applyAnswer($('#hAns').value);
-async function applyAnswer(c){try{await pc.setRemoteDescription(expand(await unpack(c)));status('connecting…');}catch(e){alert('Invalid code. Try again.');view('host');}}
 
-$('#bJoin').onclick=async()=>{
-  newSession('g');view('join');status('allow camera access…');$('#jScan').disabled=true;$('#jApply').disabled=true;$('#jOut').hidden=true;
-  await unlockIPs();mk();$('#jScan').disabled=false;$('#jApply').disabled=false;status('ready — scan the other device');
-};
-$('#jScan').onclick=()=>scan(c=>makeAnswer(c));
-$('#jApply').onclick=()=>makeAnswer($('#jOffer').value);
-async function makeAnswer(c){
-  view('join');
-  try{
-    await pc.setRemoteDescription(expand(await unpack(c)));
-    await pc.setLocalDescription(await pc.createAnswer());status('creating reply…');await gathered();
-    const cd=compact(pc.localDescription),a=await pack(cd);
-    $('#jOut').hidden=false;$('#jAns').value=a;drawQR($('#qr2'),$('#qrmsg2'),a);$('#qrinfo2').textContent=candMsg(cd);status('show reply to other device');
-  }catch(e){stopUnlock();alert('Invalid code. Try again.');}
-}
 
 // ---- camera scanner ----
-async function scan(cb){
-  stopUnlock();
-  try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});}
-  catch(e){alert('Camera unavailable. Paste the code instead.');return;}
-  const v=$('#vid');v.srcObject=cam;await v.play();view('scanbox');
-  const c=document.createElement('canvas'),x=c.getContext('2d',{willReadFrequently:true});
-  const bd=window.BarcodeDetector?new BarcodeDetector({formats:['qr_code']}):null;
-  const tick=async()=>{
-    if(!cam)return;
-    if(v.videoWidth){
-      let d=null;
-      try{if(bd){const r=await bd.detect(v);if(r[0])d=r[0].rawValue;}}catch(e){}
-      if(!d){c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0);
-        const r=jsQR(x.getImageData(0,0,c.width,c.height).data,c.width,c.height,{inversionAttempts:'dontInvert'});
-        if(r&&r.data)d=r.data;}
-      if(d){keepCam();cb(d);return;}
-    }
-    requestAnimationFrame(tick);
-  };
-  tick();
-}
-function keepCam(){if(cam){stopUnlock();unlockStream=cam;cam=null;try{$('#vid').srcObject=null;}catch(e){}}}
-function stopCam(){if(cam){cam.getTracks().forEach(t=>t.stop());cam=null;}}
-$('#scanX').onclick=()=>{stopCam();view(pc&&pc.localDescription&&pc.localDescription.type==='offer'?'host':'join');};
 
 // ---- file transfer ----
 function wire(ch){
@@ -359,7 +221,7 @@ function speed(b,ms){return (b/1e6/(ms/1000)).toFixed(1)+' MB/s';}
 function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':n>=1e3?Math.round(n/1e3)+' KB':n+' B';}
 let saveDir=null;
 const cleanPath=p=>String(p||'').replace(/\\/g,'/').split('/').filter(x=>x&&x!=='.'&&x!=='..');
-const thumbQ=[];let thumbBusy=false;
+const thumbQ=[];let thumbBusy=false;var thumbPause=false;
 async function makeThumb(it){
   if(it.size>60e6)return null;
   let bm;
@@ -372,6 +234,7 @@ async function makeThumb(it){
 async function pumpThumbs(){
   if(thumbBusy)return;thumbBusy=true;
   while(thumbQ.length){
+    if(thumbPause){await sleep(300);continue;}
     const [it,box]=thumbQ.shift();if(!box.isConnected||it._th)continue;
     try{const u=await makeThumb(it);if(u&&box.isConnected){it._th=u;const im=document.createElement('img');im.src=u;im.alt='';im.style.cssText='width:100%;height:100%;object-fit:cover';box.textContent='';box.appendChild(im);}}catch(e){}
     await sleep(40);
@@ -399,25 +262,36 @@ function completeRow(it,row){
   if(it.blob){
     const pv=document.createElement('button');pv.className='g';pv.textContent='Preview';pv.style.cssText='width:auto;margin:0;padding:6px 14px;font-size:14px';pv.onclick=()=>openPreview(it);bar.appendChild(pv);
     const a=document.createElement('a');a.href=it.url;a.download=it.base;a.className='btn';a.textContent='Save';a.style.cssText='width:auto;margin:0;padding:6px 18px;font-size:14px';
-    a.addEventListener('click',()=>markDl(it));bar.appendChild(a);
+    it.a=a;a.addEventListener('click',()=>markDl(it));bar.appendChild(a);
   }
   const x=document.createElement('button');x.className='g';x.textContent='🗑';x.title='Delete';x.style.cssText='width:auto;margin:0;padding:6px 10px;font-size:14px;border:0';
   x.onclick=()=>{if(confirm('Delete '+it.base+' from this device?'))delItems([it]);};bar.appendChild(x);
   row.appendChild(bar);
-  if(it.blob&&isAudio(it.base,it.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=it.url;au.style.cssText='width:100%;margin-top:6px';row.appendChild(au);}
+  if(it.blob&&isAudio(it.base,it.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=it.url;it.au=au;au.style.cssText='width:100%;margin-top:6px';row.appendChild(au);}
 }
 function finishRx(r,blob){
   r.row.firstChild.textContent=r.label+' ✓ '+speed(r.got,performance.now()-r.t0);
   const it={id:Date.now()+'-'+Math.random().toString(36).slice(2,7),name:r.path,base:r.base,size:r.m.size,type:blob?blob.type:(r.m.type||''),blob,done:!blob,disk:!blob,t:Date.now(),from:peerInfo?peerInfo.name:'',url:null};
   completeRow(it,r.row);received.push(it);stats.recvDone++;stats.recvBytes+=r.m.size;renderStats();
-  dbSave(it).then(ok=>{if(!ok&&blob)note('Could not keep a saved copy of '+r.base+' (storage full?). Download it now.');});
+  dbSave(it).then(ok=>{if(!ok&&blob)note('Could not keep a saved copy of '+r.base+' (storage full?). Download it now.');else if(ok&&blob)rebind(it);});
+  autoQueue(it,r.m);
+}
+// after saving, swap the in-memory Blob for the browser's disk-backed copy so memory stays low
+async function rebind(it){
+  try{
+    if(!it.blob||!db)return;
+    const b2=await dbReq(db.transaction('blobs').objectStore('blobs').get(it.id));
+    if(!b2||b2.size!==it.blob.size)return;
+    const old=it.url;it.blob=b2;it.url=URL.createObjectURL(b2);
+    if(it.a)it.a.href=it.url;if(it.au)it.au.src=it.url;if(old)URL.revokeObjectURL(old);
+  }catch(e){}
 }
 // ---- persistent library (IndexedDB) ----
 let db=null;
 const dbReq=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
 const dbTx=tx=>new Promise((res,rej)=>{tx.oncomplete=()=>res(true);tx.onerror=()=>rej(tx.error);tx.onabort=()=>rej(tx.error);});
 const metaOf=it=>({id:it.id,name:it.name,base:it.base,size:it.size,type:it.type,done:it.done,disk:it.disk,t:it.t,from:it.from});
-function dbOpen(){return new Promise((res,rej)=>{const q=indexedDB.open('dt-files',1);q.onupgradeneeded=()=>{q.result.createObjectStore('meta',{keyPath:'id'});q.result.createObjectStore('blobs');};q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+function dbOpen(){return new Promise((res,rej)=>{const q=indexedDB.open('dt-files',2);q.onupgradeneeded=()=>{const d=q.result;if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'id'});if(!d.objectStoreNames.contains('blobs'))d.createObjectStore('blobs');if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');};q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
 async function dbSave(it){if(!db)return false;try{const tx=db.transaction(['meta','blobs'],'readwrite');tx.objectStore('meta').put(metaOf(it));if(it.blob)tx.objectStore('blobs').put(it.blob,it.id);await dbTx(tx);return true;}catch(e){return false;}}
 async function dbMeta(it){if(!db)return;try{const tx=db.transaction('meta','readwrite');tx.objectStore('meta').put(metaOf(it));await dbTx(tx);}catch(e){}}
 async function dbDel(ids){if(!db)return;try{const tx=db.transaction(['meta','blobs'],'readwrite');for(const id of ids){tx.objectStore('meta').delete(id);tx.objectStore('blobs').delete(id);}await dbTx(tx);}catch(e){}}
@@ -463,7 +337,7 @@ function onMsg(e){
       if($('#inbox').classList.contains('m')){$('#inbox').textContent='';$('#inbox').classList.remove('m');}
       $('#inbox').prepend(row);
       const r=rx={m,path,base,parts:[],blobs:[],pb:0,acked:0,got:0,row,t0:performance.now(),lu:0,label,disk:!!saveDir,w:null,err:null,q:Promise.resolve()};
-      if(r.disk)r.q=(async()=>{let d=saveDir;for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
+      if(r.disk)r.q=(async()=>{let d=saveDir;for(const p of [typeFolder(base,m.type),...parts.slice(0,-1)])d=await d.getDirectoryHandle(p,{create:true});
         r.w=await(await d.getFileHandle(base,{create:true})).createWritable();})().catch(x=>{r.err=x;});
     }else if(m.t==='end'&&rx){
       const r=rx;rx=null;
@@ -577,40 +451,45 @@ $('#bDisc').onclick=()=>{
   userClosed=true;resuming=false;attemptId++;clearTimeout(rcTimer);clearSess();
   setTimeout(endPc,300);status('not connected');warnMsg('');view('home');
 };
-document.addEventListener('click',e=>{
-  const id=e.target.dataset&&e.target.dataset.copy;
-  if(id){const t=$('#'+id);t.select();navigator.clipboard?.writeText(t.value);e.target.textContent='Copied ✓';}
-});
 // ---- short-code fallback (PeerJS used only to introduce the devices; files still go peer-to-peer) ----
 let peer;
 const AL='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(6)),x=>AL[x%AL.length]).join('');
-function endPc(){stopUnlock();try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}stopCam();}
+function endPc(){stopUnlock();try{pc&&pc.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}}
 function onOpen(c){
   pc=c.peerConnection;watchPc(pc);const ch=c.dataChannel;wire(ch);ch.onmessage=onMsg;
   stopUnlock();status('connected');view('xfer');warnMsg('');setTimeout(pathInfo,1500);
 }
+const NO_LINK='Could not link the two devices — their networks are blocking direct connections. Try: the same normal Wi-Fi (not a guest network), a phone hotspot, VPN / iCloud Private Relay off, or add a relay server in ⚙ Settings.';
+const hint=t=>{const e=$('#connHint');if(e)e.textContent=t||'';};
+function peerErr(e){
+  const t=e&&e.type;
+  if(t==='peer-unavailable')return'Code not found. Check the code, and make sure the other device is still showing it.';
+  if(t==='negotiation-failed'||t==='connection-closed'||t==='webrtc')return NO_LINK;
+  if(t==='unavailable-id')return'That code is already in use. Try again.';
+  return'Can’t reach the code service ('+(t||'network')+'). Check your internet — or use “No internet? Pair by copy & paste”.';
+}
 function useConn(c){
   c.on('open',()=>onOpen(c));
   c.on('close',()=>onDcClose(c.dataChannel));
-  c.on('error',e=>alert('Connection error: '+e.type));
+  c.on('error',e=>{status('not connected');hint(peerErr(e));});
 }
 function hostCode(){
   const code=newCode();peer=mkPeer('dt-'+code);status('getting code…');
   peer.on('open',()=>{$('#myCode').textContent=code.slice(0,3)+' '+code.slice(3);status('waiting for other device');});
   peer.on('connection',useConn);
-  peer.on('error',e=>{if(e.type==='unavailable-id'){try{peer.destroy()}catch(x){}hostCode();}else alert('Could not reach the code service ('+e.type+'). Check your internet.');});
+  peer.on('error',e=>{if(e.type==='unavailable-id'){try{peer.destroy()}catch(x){}hostCode();}else{status('not connected');hint(peerErr(e));}});
 }
-document.querySelectorAll('.toCode').forEach(b=>b.onclick=()=>{endPc();status('not connected');view('code');});
-$('#cBack').onclick=()=>{endPc();$('#cShowBox').hidden=true;status('not connected');view('home');};
 $('#cShow').onclick=async()=>{newSession('h');endPc();await unlockIPs();$('#cShowBox').hidden=false;$('#myCode').textContent='…';hostCode();};
 $('#cGo').onclick=async()=>{
   const code=$('#cIn').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
-  if(code.length!==6)return alert('Enter the 6-character code.');
-  newSession('g');endPc();status('connecting…');await unlockIPs();peer=mkPeer();
-  peer.on('open',()=>{useConn(peer.connect('dt-'+code,{reliable:true}));
-    setTimeout(()=>{if($('#st').textContent==='connecting…')status('not connected');},15000);});
-  peer.on('error',e=>{status('not connected');alert(e.type==='peer-unavailable'?'Code not found. Check it and try again.':'Could not connect ('+e.type+').');});
+  if(code.length!==6)return hint('Enter the 6-character code shown on the other device.');
+  newSession('g');endPc();status('connecting…');hint('Connecting… keep both screens on.');
+  await unlockIPs();const p=peer=mkPeer();let done=false;
+  const fail=t=>{if(done)return;done=true;status('not connected');hint(t);try{p.destroy();}catch(e){}};
+  const to=setTimeout(()=>fail(NO_LINK),25000);
+  p.on('open',()=>{const c=p.connect('dt-'+code,{reliable:true});c.on('open',()=>{done=true;clearTimeout(to);hint('');});useConn(c);});
+  p.on('error',e=>{clearTimeout(to);fail(peerErr(e));});
 };
 // ---- background keep-alive (best effort: wake lock + inaudible looping audio) ----
 let wl=null,aud=null;
@@ -653,7 +532,7 @@ function renderStats(){
   const nb=received.filter(f=>f.blob).length;
   $('#saveBar').hidden=!nb;$('#saveAll').textContent='⬇ Save all ('+nb+')';
   $('#saveSub').textContent=saveDir?'Auto-saving new files to "'+saveDir.name+'"':(wait?wait+' not saved yet':'All files saved ✓');
-  $('#clearAll').hidden=!received.length;renderFolders();
+  $('#clearAll').hidden=!received.length;renderFolders();renderAuto();
 }
 // ---- saving: one clean "Save" sheet (Gallery / Folder), ZIP only as a fallback ----
 var zipBusy=false;
@@ -669,7 +548,6 @@ function sheetMsg(t,prog){$('#shMsg').textContent=t||'';const p=$('#shProg');p.h
 function closeSheet(){if(!sheetBusy)$('#sheet').hidden=true;}
 $('#shClose').onclick=closeSheet;
 $('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet')closeSheet();});
-$('#shAuto').onchange=e=>{if(!e.target.checked){saveDir=null;renderStats();}};
 function openSheet(list,title,zipName){
   const items=list.filter(f=>f.blob);if(!items.length)return;
   const media=items.filter(isMedia),mode=folderMode(),n=items.length,box=$('#shOpts');
@@ -683,7 +561,6 @@ function openSheet(list,title,zipName){
   if(media.length)opt('🖼','Save to Photos / Gallery',media.length+' photo'+(media.length>1?'s':'')+' & video'+(media.length>1?'s':'')+
     (PLAT==='iOS'?' · tap “Save to Photos” next':PLAT==='Android'?' · pick Gallery or Google Photos next':' · saved to your Downloads'),()=>runSave(()=>saveToGallery(media)));
   opt('📁','Save to a folder',mode==='picker'?'Choose where — folder structure is kept':mode==='share'?'Choose a folder in the Files app':'Downloads as one ZIP file',()=>runSave(()=>saveToFolder(items,zipName)));
-  $('#shAutoWrap').hidden=mode!=='picker';$('#shAuto').checked=!!saveDir;
   $('#sheet').hidden=false;
 }
 function friendlyErr(e){
@@ -699,24 +576,25 @@ const recentSave=()=>sheetBusy||Date.now()-lastSave<180000;
 async function runSave(fn){
   if(sheetBusy)return;
   if(rx){sheetMsg('A file is still arriving. Wait for it to finish, then save — so nothing gets interrupted.');return;}
-  sheetBusy=true;lastSave=Date.now();
+  sheetBusy=true;thumbPause=true;lastSave=Date.now();
   try{await fn();}catch(e){sheetMsg(friendlyErr(e));}
-  finally{sheetBusy=false;lastSave=Date.now();}
+  finally{sheetBusy=false;thumbPause=false;lastSave=Date.now();}
 }
 const asFiles=l=>l.map(f=>new File([f.blob],f.base,{type:mimeOf(f)}));
 const IOS_PHOTOS=/\.(jpe?g|png|gif|heic|heif|mp4|m4v|mov|tiff?)$/i;
 function planBatches(items,one){
   if(one)return items.map(i=>[i]);
-  const ios=PLAT==='iOS',MAXN=ios?8:25,MAXB=ios?80e6:300e6,out=[];let cur=[],sz=0;
+  const ios=PLAT==='iOS',MAXN=ios?6:10,MAXB=ios?60e6:100e6,out=[];let cur=[],sz=0;
   for(const it of items){if(cur.length&&(cur.length>=MAXN||sz+it.size>MAXB)){out.push(cur);cur=[];sz=0;}cur.push(it);sz+=it.size;}
   if(cur.length)out.push(cur);return out;
 }
 async function downloadAll(list){
   let n=0;
-  for(const f of list){saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);markDl(f);n++;sheetMsg('Saving '+n+' of '+list.length+'…',n/list.length);await sleep(600);}
+  for(const f of list){saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);markDl(f,true);n++;sheetMsg('Saving '+n+' of '+list.length+'…',n/list.length);await sleep(600);}
+  await markMany(list);
   sheetMsg('✓ '+n+' file'+(n>1?'s':'')+' saved to your Downloads'+(PLAT==='Android'?' — they also show up in your Gallery.':'.'),1);
 }
-async function shareBatch(list){await navigator.share({files:asFiles(list)});list.forEach(markDl);}
+async function shareBatch(list){await navigator.share({files:asFiles(list)});await markMany(list);}
 function renderGroups(batches,total,one){
   const box=$('#shOpts');box.textContent='';let at=0;$('#shFb').hidden=true;
   sheetMsg(one?'Tap each item to save it.':'Large selection — saved in '+batches.length+' groups. Tap each group below.');
@@ -739,8 +617,8 @@ async function saveToGallery(media){
   media=media.filter(it=>!bad.includes(it));
   const badBtn=()=>mkBtn('Save '+bad.length+' file'+(bad.length>1?'s':'')+' Photos can’t store (WebP/WebM…) to Files',()=>runSave(()=>shareBatch(bad)));
   if(!media.length){sheetMsg('iPhone Photos can’t store these formats — save them to Files instead.');if(bad.length)$('#shOpts').appendChild(badBtn());return;}
-  const can=!!(navigator.share&&navigator.canShare),files=asFiles(media);
-  const ok=can?media.filter((it,i)=>{try{return navigator.canShare({files:[files[i]]});}catch(e){return false;}}):[];
+  const can=!!(navigator.share&&navigator.canShare);
+  const ok=can?media.filter(it=>{try{return navigator.canShare({files:[new File([it.blob],it.base,{type:mimeOf(it)})]});}catch(e){return false;}}):[];
   const other=media.filter(it=>!ok.includes(it));
   if(!ok.length){await downloadAll(media);if(bad.length)$('#shOpts').appendChild(badBtn());return;}
   const batches=planBatches(ok);
@@ -764,19 +642,19 @@ async function saveToFolder(items,zipName){
   const mode=folderMode();
   if(mode==='picker'){
     const root=await showDirectoryPicker({mode:'readwrite'});
-    if($('#shAuto').checked)saveDir=root;
     let n=0;
     for(const it of items){
       const parts=cleanPath(it.name);let d=root;
       for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
       const w=await(await d.getFileHandle(parts[parts.length-1],{create:true})).createWritable();await w.write(it.blob);await w.close();
-      markDl(it);n++;sheetMsg('Saving '+n+' of '+items.length+'…',n/items.length);
+      markDl(it,true);n++;sheetMsg('Saving '+n+' of '+items.length+'…',n/items.length);
     }
-    sheetMsg('✓ Saved '+n+' file'+(n>1?'s':'')+' to “'+root.name+'”.'+(saveDir===root?' New files will be saved there automatically.':''),1);renderStats();return;
+    await markMany(items);
+    sheetMsg('✓ Saved '+n+' file'+(n>1?'s':'')+' to “'+root.name+'”.',1);renderStats();return;
   }
   if(mode==='share'){
-    const files=asFiles(items);
-    if(navigator.canShare(files.length?{files}:{})){await navigator.share({files});items.forEach(markDl);sheetMsg('✓ Done.',1);return;}
+    const okAll=items.every(it=>{try{return navigator.canShare({files:[new File([it.blob],it.base,{type:mimeOf(it)})]});}catch(e){return false;}});
+    if(okAll){const batches=planBatches(items);if(batches.length===1){await shareBatch(batches[0]);sheetMsg('✓ Done.',1);return;}renderGroups(batches,items.length,false);return;}
   }
   await zipDownload(items,(zipName||'transfer-'+new Date().toISOString().slice(0,10))+'.zip');
 }
@@ -787,7 +665,7 @@ async function zipDownload(list,fname){
   try{
     const all=uniqueNames(),map=new Map(received.map((f,i)=>[f,all[i]]));
     const b=await makeZip(items.map(f=>({name:map.get(f)||f.name,blob:f.blob})),p=>sheetMsg('Preparing ZIP… '+Math.round(p*100)+'%',p));
-    const u=URL.createObjectURL(b);saveBlobUrl(u,fname);items.forEach(markDl);setTimeout(()=>URL.revokeObjectURL(u),120000);
+    const u=URL.createObjectURL(b);saveBlobUrl(u,fname);await markMany(items);setTimeout(()=>URL.revokeObjectURL(u),120000);
     sheetMsg('✓ Saved “'+fname+'” to your Downloads.',1);
   }finally{zipBusy=false;renderStats();}
 }
@@ -864,7 +742,12 @@ $('#pvWrap').addEventListener('touchstart',e=>{pvX=e.touches[0].clientX;},{passi
 $('#pvWrap').addEventListener('touchend',e=>{if(pvX==null)return;const dx=e.changedTouches[0].clientX-pvX;pvX=null;if(Math.abs(dx)>70)pvStep(dx<0?1:-1);},{passive:true});
 $('#saveAll').onclick=()=>openSheet(received,'Save all files');
 $('#clearAll').onclick=()=>{if(received.length&&confirm('Delete all '+received.length+' received file(s) from this device?'))delItems([...received]);};
-function markDl(it){it.done=true;it.badge.textContent='✓ Saved';it.badge.className='ok';dbMeta(it);renderStats();}
+function markDl(it,quiet){it.done=true;if(it.badge){it.badge.textContent='✓ Saved';it.badge.className='ok';}if(!quiet){dbMeta(it);renderStats();}}
+async function markMany(list){
+  list.forEach(f=>markDl(f,true));
+  if(db){try{const tx=db.transaction('meta','readwrite');list.forEach(f=>tx.objectStore('meta').put(metaOf(f)));await dbTx(tx);}catch(e){}}
+  renderStats();
+}
 function uniqueNames(){const seen={};return received.map(f=>{const k=f.name;if(!seen[k]){seen[k]=1;return k;}
   const sl=k.lastIndexOf('/'),dd=k.lastIndexOf('.'),d=dd>sl+1?dd:-1,b=d>0?k.slice(0,d):k,x=d>0?k.slice(d):'';return b+' ('+seen[k]++ +')'+x;});}
 function saveBlobUrl(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
@@ -1035,6 +918,77 @@ async function askAccept(fs){
   const ans=await new Promise(res=>{pending[oid]=res;setTimeout(()=>{if(pending[oid]){delete pending[oid];res(null);}},120000);});
   return{ok:ans===true,declined:ans===false,oid};
 }
+// ---- auto-save: photos & videos -> gallery, documents -> files ----
+function isIOS(){return /iPhone|iPad|iPod/.test(navigator.userAgent);}
+const typeFolder=(base,type)=>isMedia({base,type})?'Photos & Videos':'Documents';
+var autoMsg='',pendingDir=null,autoPend=[],autoTimer=null;
+function autoMode(){if(!$('#autoSave').checked)return'off';if(saveDir)return'folder';return isIOS()?'prompt':'download';}
+async function kvPut(k,v){if(!db)return;try{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(v,k);await dbTx(tx);}catch(e){}}
+async function kvGet(k){if(!db)return null;try{return await dbReq(db.transaction('kv').objectStore('kv').get(k));}catch(e){return null;}}
+async function kvDel(k){if(!db)return;try{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').delete(k);await dbTx(tx);}catch(e){}}
+function updateAutoHelp(){
+  const on=$('#autoSave').checked,andr=/Android/.test(navigator.userAgent);
+  $('#autoHelp').textContent=!on?'Off — use “Save all” on the Received screen.':saveDir?'Saving into “'+saveDir.name+'” — sub-folders “Photos & Videos” and “Documents”.'
+    :isIOS()?'iPhone doesn’t allow silent saving, so after each transfer you get two one-tap buttons: Photos (photos & videos) and Files (documents).'
+    :andr?'Photos & videos download automatically and appear in your Gallery; documents go to Downloads. Allow “multiple downloads” if Chrome asks.'
+    :'Files download automatically to your Downloads folder'+(window.showDirectoryPicker?', or choose a folder below.':'.');
+  $('#autoDir').hidden=!window.showDirectoryPicker||!on;
+  $('#autoDir').textContent=saveDir?'📁 Change auto-save folder… (now “'+saveDir.name+'”)':'📁 Choose auto-save folder…';
+  $('#autoDirClear').hidden=!saveDir;
+}
+function renderAuto(){
+  const bar=$('#autoBar');bar.textContent='';
+  const add=(t,cls)=>{const d=document.createElement('div');d.className=cls||'m';d.textContent=t;bar.appendChild(d);};
+  const btn=(t,fn)=>{const b=document.createElement('button');b.textContent=t;b.style.cssText='margin-top:8px;padding:10px;font-size:15px';b.onclick=fn;bar.appendChild(b);};
+  const mode=autoMode();
+  if($('#autoSave').checked&&pendingDir&&!saveDir){
+    add('Auto-save folder “'+pendingDir.name+'” needs your permission again.');
+    btn('Re-enable auto-save',async()=>{try{if((await pendingDir.requestPermission({mode:'readwrite'}))==='granted'){saveDir=pendingDir;pendingDir=null;updateAutoHelp();renderStats();}}catch(e){}});
+  }else if(mode==='prompt'){
+    const un=received.filter(f=>f.blob&&!f.done),media=un.filter(isMedia),docs=un.filter(f=>!isMedia(f));
+    if(un.length){
+      add('📥 '+un.length+' new file'+(un.length>1?'s':'')+' received','');
+      bar.firstChild.style.fontWeight='600';
+      if(media.length)btn('📷 Save '+media.length+' photo'+(media.length>1?'s':'')+' & video'+(media.length>1?'s':'')+' to Photos',()=>quickSave(media,'media'));
+      if(docs.length)btn('📁 Save '+docs.length+' document'+(docs.length>1?'s':'')+' to Files',()=>quickSave(docs,'docs'));
+    }else if(autoMsg)add(autoMsg,'ok');
+  }else if(mode==='download'&&autoMsg)add(autoMsg,'ok');
+  else if(mode==='folder')add('✓ Auto-saving to “'+saveDir.name+'” (Photos & Videos / Documents).','ok');
+  bar.hidden=!bar.childNodes.length;
+}
+function quickSave(list,kind){
+  $('#shTitle').textContent=kind==='media'?'Save to Photos':'Save to Files';
+  $('#shSub').textContent=list.length+' file'+(list.length>1?'s':'')+' · '+fmt(list.reduce((a,f)=>a+f.size,0));
+  $('#shOpts').textContent='';sheetMsg('');$('#shFb').hidden=true;$('#sheet').hidden=false;
+  runSave(()=>kind==='media'?saveToGallery(list):saveToFolder(list,'documents'));
+}
+function autoQueue(it,m){
+  const mode=autoMode();
+  if(mode==='off')return;
+  if(mode==='folder'||mode==='prompt'){renderAuto();return;}   // folder: already written as it arrived · prompt: one-tap buttons
+  autoPend.push(it);clearTimeout(autoTimer);
+  if(m&&m.n&&m.i===m.n)autoFlush();else autoTimer=setTimeout(autoFlush,4000);
+}
+async function autoFlush(){
+  clearTimeout(autoTimer);
+  const list=autoPend.filter(f=>f.blob&&!f.done);autoPend=[];if(!list.length)return;
+  let n=0;
+  for(const f of list){try{saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);n++;}catch(e){}await sleep(450);}
+  await markMany(list);
+  const med=list.filter(isMedia).length;
+  autoMsg='✓ Auto-saved '+n+' file'+(n>1?'s':'')+' to your Downloads'+(med&&/Android/.test(navigator.userAgent)?' — photos & videos also show in your Gallery.':'.');
+  renderAuto();
+}
+$('#autoSave').checked=LS.get('dt-autosave','1')==='1';
+$('#autoSave').onchange=e=>{LS.set('dt-autosave',e.target.checked?'1':'0');updateAutoHelp();renderAuto();};
+$('#autoDir').onclick=async()=>{try{const h=await showDirectoryPicker({mode:'readwrite'});saveDir=h;pendingDir=null;await kvPut('saveDir',h);updateAutoHelp();renderStats();}catch(e){}};
+$('#autoDirClear').onclick=async()=>{saveDir=null;pendingDir=null;await kvDel('saveDir');updateAutoHelp();renderStats();};
+async function loadSaveDir(){
+  const h=await kvGet('saveDir');if(!h||!h.queryPermission)return;
+  try{if((await h.queryPermission({mode:'readwrite'}))==='granted')saveDir=h;else pendingDir=h;}catch(e){}
+  updateAutoHelp();renderStats();
+}
+updateAutoHelp();
 // ---- automatic reconnect (session token shared inside the encrypted channel; PeerJS only re-introduces the devices) ----
 let sess=null,myRole=null,userClosed=false,resuming=false,attemptId=0,rcTimer=null;
 function randTok(){return Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');}
@@ -1094,7 +1048,7 @@ function restoreSess(){
   return false;
 }
 renderDevs();
-(async()=>{try{db=await dbOpen();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}await loadSaved();}catch(e){}})();
+(async()=>{try{db=await dbOpen();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}await loadSaved();await loadSaveDir();}catch(e){}})();
 startListening();
 if(!restoreSess())view('home');
 </script>
