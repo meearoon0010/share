@@ -62,6 +62,8 @@ ol{padding-left:20px;margin:6px 0;color:var(--mu);font-size:14px}
     <div class="m" id="autoHelp" style="margin:2px 0 0 22px"></div>
     <button class="g" id="autoDir" hidden style="margin-top:6px;padding:8px;font-size:14px">📁 Choose auto-save folder…</button>
     <button class="g" id="autoDirClear" hidden style="margin-top:6px;padding:8px;font-size:14px">Stop using this folder</button>
+    <label class="m" style="display:block;margin-top:10px"><input type="checkbox" id="freeApp" checked> <b>Free up app storage after saving</b></label>
+    <div class="m" style="margin:2px 0 0 22px">Once a file is saved to your Gallery / Files / folder, the app's own copy is erased a little later (this keeps memory low and prevents crashes). Sent files are never kept on the sending phone.</div>
     <div class="m" style="margin-top:12px"><b>Relay server (optional)</b><br>Only for networks that block direct phone-to-phone links. Needs a TURN service; setting it on one device is usually enough.</div>
     <input id="turnUrl" class="tx" placeholder="turn:your-server.com:3478" autocapitalize="none" spellcheck="false">
     <input id="turnUser" class="tx" placeholder="username" autocapitalize="none" spellcheck="false">
@@ -258,7 +260,7 @@ function completeRow(it,row){
   head.append(thumbFor(it),lab);if(it.blob)head.onclick=()=>openPreview(it);
   const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;align-items:center;margin-top:6px';
   it.badge=document.createElement('div');it.badge.style.flex='1';it.badge.className=it.done?'ok':'m';
-  it.badge.textContent=it.blob?(it.done?'✓ Saved':'Not saved yet'):'✓ Saved to your folder';bar.appendChild(it.badge);
+  it.badge.textContent=it.blob?(it.done?'✓ Saved':'Not saved yet'):(it.freed?'✓ Saved — app copy removed to free space':'✓ Saved to your folder');bar.appendChild(it.badge);
   if(it.blob){
     const pv=document.createElement('button');pv.className='g';pv.textContent='Preview';pv.style.cssText='width:auto;margin:0;padding:6px 14px;font-size:14px';pv.onclick=()=>openPreview(it);bar.appendChild(pv);
     const a=document.createElement('a');a.href=it.url;a.download=it.base;a.className='btn';a.textContent='Save';a.style.cssText='width:auto;margin:0;padding:6px 18px;font-size:14px';
@@ -269,13 +271,105 @@ function completeRow(it,row){
   row.appendChild(bar);
   if(it.blob&&isAudio(it.base,it.type)){const au=document.createElement('audio');au.controls=true;au.preload='none';au.src=it.url;it.au=au;au.style.cssText='width:100%;margin-top:6px';row.appendChild(au);}
 }
-function finishRx(r,blob){
+function finishRx(r,blob,opfsName){
   r.row.firstChild.textContent=r.label+' ✓ '+speed(r.got,performance.now()-r.t0);
-  const it={id:Date.now()+'-'+Math.random().toString(36).slice(2,7),name:r.path,base:r.base,size:r.m.size,type:blob?blob.type:(r.m.type||''),blob,done:!blob,disk:!blob,t:Date.now(),from:peerInfo?peerInfo.name:'',url:null};
+  const it={id:Date.now()+'-'+Math.random().toString(36).slice(2,7),name:r.path,base:r.base,size:r.m.size,type:blob?blob.type:(r.m.type||''),blob,done:!blob,disk:!blob,t:Date.now(),from:peerInfo?peerInfo.name:'',url:null,opfs:opfsName||null};
   completeRow(it,r.row);received.push(it);stats.recvDone++;stats.recvBytes+=r.m.size;renderStats();
-  dbSave(it).then(ok=>{if(!ok&&blob)note('Could not keep a saved copy of '+r.base+' (storage full?). Download it now.');else if(ok&&blob)rebind(it);});
+  dbSave(it).then(ok=>{if(!ok&&blob)note('Could not keep a saved copy of '+r.base+' (storage full?). Download it now.');else if(ok&&blob&&!it.opfs)rebind(it);});
   autoQueue(it,r.m);
 }
+// ---- stream received files straight to disk (Origin Private File System, written by a worker) ----
+// Large videos never sit in memory: every chunk goes to disk as it arrives.
+var OPW=null,opId=0,opfsReady=false;const opP=new Map(),opJobs=new Map();
+const WSRC=`
+let root=null;const hs=new Map();let q=Promise.resolve();
+self.onmessage=e=>{q=q.then(()=>run(e.data));};
+async function run(m){
+  try{
+    if(!root)root=await navigator.storage.getDirectory();
+    if(m.op==='open'){const fh=await root.getFileHandle(m.name,{create:true});const h=await fh.createSyncAccessHandle();h.truncate(0);hs.set(m.id,{h:h,pos:0,name:m.name});self.postMessage({t:'done',rid:m.rid});}
+    else if(m.op==='write'){const o=hs.get(m.id);if(!o)throw new Error('not open');const len=m.buf.byteLength;const n=o.h.write(new Uint8Array(m.buf),{at:o.pos});if(n!==len)throw new Error('disk full');o.pos+=n;self.postMessage({t:'w',id:m.id,n:o.pos});}
+    else if(m.op==='close'){const o=hs.get(m.id);if(o){o.h.flush();o.h.close();hs.delete(m.id);}self.postMessage({t:'done',rid:m.rid});}
+    else if(m.op==='abort'){const o=hs.get(m.id);if(o){try{o.h.close();}catch(e){}hs.delete(m.id);try{await root.removeEntry(o.name);}catch(e){}}self.postMessage({t:'done',rid:m.rid});}
+    else if(m.op==='remove'){try{await root.removeEntry(m.name);}catch(e){}self.postMessage({t:'done',rid:m.rid});}
+  }catch(err){self.postMessage({t:'err',rid:m.rid,id:m.id,msg:String(err&&err.message||err)});}
+}`;
+function getW(){
+  if(OPW)return OPW;
+  OPW=new Worker(URL.createObjectURL(new Blob([WSRC],{type:'text/javascript'})));
+  OPW.onmessage=ev=>{
+    const m=ev.data;
+    if(m.t==='w'){const r=opJobs.get(m.id);if(r)onOpfsWritten(r,m.n);return;}
+    if(m.t==='done'){const p=opP.get(m.rid);if(p){opP.delete(m.rid);p.res();}return;}
+    if(m.t==='err'){const p=opP.get(m.rid);if(p){opP.delete(m.rid);p.rej(new Error(m.msg));}else{const r=opJobs.get(m.id);if(r)r.err=new Error(m.msg);}}
+  };
+  return OPW;
+}
+function opfsCall(msg){
+  return new Promise((res,rej)=>{
+    const w=getW(),rid=++opId;msg.rid=rid;opP.set(rid,{res,rej});
+    setTimeout(()=>{if(opP.has(rid)){opP.delete(rid);rej(new Error('storage timeout'));}},30000);
+    w.postMessage(msg);
+  });
+}
+function onOpfsWritten(r,n){
+  r.written=n;
+  if(peerInfo&&peerInfo.v>=3&&r.written-r.acked>=1048576){r.acked=r.written;sendJ({t:'ack',n:r.written});}   // pace the sender by what is really on disk
+}
+async function probeOpfs(){
+  try{
+    if(!(navigator.storage&&navigator.storage.getDirectory&&window.Worker))return;
+    const id='probe';await opfsCall({op:'open',id,name:'.probe'});await opfsCall({op:'close',id});await opfsCall({op:'remove',name:'.probe'});
+    opfsReady=true;
+  }catch(e){opfsReady=false;}
+}
+async function opfsFile(name,base,type){
+  const root=await navigator.storage.getDirectory();
+  const f=await(await root.getFileHandle(name)).getFile();
+  return new File([f],base,{type:type||guessMime(base)});
+}
+async function finishOpfs(r){
+  try{
+    await opfsCall({op:'close',id:r.wid});opJobs.delete(r.wid);
+    if(r.err)throw r.err;
+    finishRx(r,await opfsFile(r.name,r.base,r.m.type),r.name);
+  }catch(e){r.row.firstChild.textContent=r.label+' — could not save ('+((e&&e.message)||e)+')';stats.failed++;renderStats();}
+}
+// ---- erase the app's own copy once a file is saved (keeps memory/storage low) ----
+var freeDelayFor=it=>Math.min(20*60e3,Math.max(90e3,it.size/2e6*1000));   // give the download / share time to finish reading the file
+function scheduleFree(list){
+  if(!$('#freeApp').checked)return;
+  const now=Date.now();
+  for(const it of list)if(it.blob&&it.done&&!it.freeAt)it.freeAt=now+freeDelayFor(it);
+}
+function rowLabel(it){return(isAudio(it.base,it.type)?'🎵 ':'⬇ ')+it.name+' ('+fmt(it.size)+')'+(it.from?' · from '+it.from:'')+' · '+new Date(it.t).toLocaleString();}
+async function freeItem(it){
+  try{
+    if(it.opfs)await opfsCall({op:'remove',name:it.opfs});
+    else if(db){const tx=db.transaction('blobs','readwrite');tx.objectStore('blobs').delete(it.id);await dbTx(tx);}
+    if(it.url)URL.revokeObjectURL(it.url);
+    it.blob=null;it.url=null;it.opfs=null;it.disk=true;it.freed=true;it.freeAt=0;it.a=null;it.au=null;
+    await dbMeta(it);
+    if(pvIt===it)closePreview();
+    if(it.row){it.row.textContent='';it.row.innerHTML='<div></div>';it.row.firstChild.textContent=rowLabel(it);completeRow(it,it.row);}
+    renderStats();
+  }catch(e){}
+}
+var sweeping=false;
+async function freeSweep(){
+  if(sweeping||sheetBusy||!$('#freeApp').checked)return;sweeping=true;
+  try{const now=Date.now();for(const it of received.slice())if(it.blob&&it.done&&it.freeAt&&now>=it.freeAt)await freeItem(it);}
+  finally{sweeping=false;}
+}
+async function cleanOrphans(){   // leftovers from interrupted transfers
+  try{
+    if(!opfsReady)return;
+    const root=await navigator.storage.getDirectory(),keep=new Set(received.map(f=>f.opfs).filter(Boolean)),names=[];
+    for await(const [n] of root.entries())names.push(n);
+    for(const n of names)if(n.startsWith('f-')&&!keep.has(n)&&!opJobs.has(n))await root.removeEntry(n).catch(()=>{});
+  }catch(e){}
+}
+setInterval(freeSweep,15000);
 // after saving, swap the in-memory Blob for the browser's disk-backed copy so memory stays low
 async function rebind(it){
   try{
@@ -290,13 +384,14 @@ async function rebind(it){
 let db=null;
 const dbReq=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
 const dbTx=tx=>new Promise((res,rej)=>{tx.oncomplete=()=>res(true);tx.onerror=()=>rej(tx.error);tx.onabort=()=>rej(tx.error);});
-const metaOf=it=>({id:it.id,name:it.name,base:it.base,size:it.size,type:it.type,done:it.done,disk:it.disk,t:it.t,from:it.from});
+const metaOf=it=>({id:it.id,name:it.name,base:it.base,size:it.size,type:it.type,done:it.done,disk:it.disk,t:it.t,from:it.from,opfs:it.opfs||null,freed:!!it.freed,freeAt:it.freeAt||0});
 function dbOpen(){return new Promise((res,rej)=>{const q=indexedDB.open('dt-files',2);q.onupgradeneeded=()=>{const d=q.result;if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'id'});if(!d.objectStoreNames.contains('blobs'))d.createObjectStore('blobs');if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');};q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
-async function dbSave(it){if(!db)return false;try{const tx=db.transaction(['meta','blobs'],'readwrite');tx.objectStore('meta').put(metaOf(it));if(it.blob)tx.objectStore('blobs').put(it.blob,it.id);await dbTx(tx);return true;}catch(e){return false;}}
+async function dbSave(it){if(!db)return false;try{const tx=db.transaction(['meta','blobs'],'readwrite');tx.objectStore('meta').put(metaOf(it));if(it.blob&&!it.opfs)tx.objectStore('blobs').put(it.blob,it.id);await dbTx(tx);return true;}catch(e){return false;}}
 async function dbMeta(it){if(!db)return;try{const tx=db.transaction('meta','readwrite');tx.objectStore('meta').put(metaOf(it));await dbTx(tx);}catch(e){}}
 async function dbDel(ids){if(!db)return;try{const tx=db.transaction(['meta','blobs'],'readwrite');for(const id of ids){tx.objectStore('meta').delete(id);tx.objectStore('blobs').delete(id);}await dbTx(tx);}catch(e){}}
 function delItems(list){
   for(const it of list){const i=received.indexOf(it);if(i>=0)received.splice(i,1);if(it.url)URL.revokeObjectURL(it.url);if(it.row)it.row.remove();}
+  list.forEach(it=>{if(it.opfs)opfsCall({op:'remove',name:it.opfs}).catch(()=>{});});
   dbDel(list.map(i=>i.id));stats.recvDone=received.length;stats.recvBytes=received.reduce((a,f)=>a+f.size,0);
   if(!received.length){$('#inbox').textContent='Nothing yet.';$('#inbox').classList.add('m');}
   renderStats();
@@ -306,7 +401,8 @@ async function loadSaved(){
   metas.sort((a,b)=>a.t-b.t);
   for(const m of metas){
     let blob=null;
-    if(!m.disk){blob=await dbReq(db.transaction('blobs').objectStore('blobs').get(m.id));if(!blob)continue;}
+    if(m.opfs){try{blob=await opfsFile(m.opfs,m.base,m.type);}catch(e){continue;}}
+    else if(!m.disk){blob=await dbReq(db.transaction('blobs').objectStore('blobs').get(m.id));if(!blob)continue;}
     const it=Object.assign({},m,{blob,url:null});
     const row=document.createElement('div');row.className='row';row.innerHTML='<div></div>';
     row.firstChild.textContent=(isAudio(it.base,it.type)?'🎵 ':'⬇ ')+it.name+' ('+fmt(it.size)+')'+(it.from?' · from '+it.from:'')+' · '+new Date(it.t).toLocaleString();
@@ -339,17 +435,20 @@ function onMsg(e){
       const r=rx={m,path,base,parts:[],blobs:[],pb:0,acked:0,got:0,row,t0:performance.now(),lu:0,label,disk:!!saveDir,w:null,err:null,q:Promise.resolve()};
       if(r.disk)r.q=(async()=>{let d=saveDir;for(const p of [typeFolder(base,m.type),...parts.slice(0,-1)])d=await d.getDirectoryHandle(p,{create:true});
         r.w=await(await d.getFileHandle(base,{create:true})).createWritable();})().catch(x=>{r.err=x;});
+      else if(opfsReady){r.opfs=true;r.name='f-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);r.wid=r.name;r.written=0;opJobs.set(r.wid,r);opfsCall({op:'open',id:r.wid,name:r.name}).catch(x=>{r.err=x;});}
     }else if(m.t==='end'&&rx){
       const r=rx;rx=null;
       if(r.disk)r.q=r.q.then(()=>r.w&&r.w.close()).then(()=>{if(r.err||!r.w)throw 1;finishRx(r,null);})
         .catch(()=>{r.row.firstChild.textContent=r.label+' — could not save to folder';stats.failed++;renderStats();});
+      else if(r.opfs)finishOpfs(r);
       else finishRx(r,new Blob([...r.blobs,...r.parts],{type:r.m.type||guessMime(r.base)}));
     }
   }else if(rx){
     const r=rx,d=e.data;r.got+=d.byteLength;
     if(r.disk)r.q=r.q.then(()=>r.w&&r.w.write(d));
+    else if(r.opfs){OPW.postMessage({op:'write',id:r.wid,buf:d},[d]);}
     else{r.parts.push(d);r.pb+=d.byteLength;if(r.pb>=8*1048576){r.blobs.push(new Blob(r.parts));r.parts=[];r.pb=0;}}   // hand data to the Blob store so the JS heap stays small
-    if(peerInfo&&peerInfo.v>=3&&r.got-r.acked>=1048576){r.acked=r.got;sendJ({t:'ack',n:r.got});}
+    if(!r.opfs&&peerInfo&&peerInfo.v>=3&&r.got-r.acked>=1048576){r.acked=r.got;sendJ({t:'ack',n:r.got});}
     const n=performance.now();
     if(n-r.lu>250){r.lu=n;r.row.querySelector('progress').value=r.got;r.row.firstChild.textContent=r.label+' · '+speed(r.got,n-r.t0)+left(r.got,r.m.size,n-r.t0);}
   }
@@ -444,6 +543,7 @@ async function send(f,i,n){
     ch.send(JSON.stringify({t:'end'}));
   }catch(e){return fail();}
   row.firstChild.textContent=label+' ✓ '+speed(f.size,performance.now()-t0);
+  setTimeout(()=>row.remove(),2500);
   stats.sentDone++;stats.sentBytes+=f.size;renderStats();return true;
 }
 $('#bDisc').onclick=()=>{
@@ -742,9 +842,9 @@ $('#pvWrap').addEventListener('touchstart',e=>{pvX=e.touches[0].clientX;},{passi
 $('#pvWrap').addEventListener('touchend',e=>{if(pvX==null)return;const dx=e.changedTouches[0].clientX-pvX;pvX=null;if(Math.abs(dx)>70)pvStep(dx<0?1:-1);},{passive:true});
 $('#saveAll').onclick=()=>openSheet(received,'Save all files');
 $('#clearAll').onclick=()=>{if(received.length&&confirm('Delete all '+received.length+' received file(s) from this device?'))delItems([...received]);};
-function markDl(it,quiet){it.done=true;if(it.badge){it.badge.textContent='✓ Saved';it.badge.className='ok';}if(!quiet){dbMeta(it);renderStats();}}
+function markDl(it,quiet){it.done=true;if(it.badge){it.badge.textContent='✓ Saved';it.badge.className='ok';}if(!quiet){scheduleFree([it]);dbMeta(it);renderStats();}}
 async function markMany(list){
-  list.forEach(f=>markDl(f,true));
+  list.forEach(f=>markDl(f,true));scheduleFree(list);
   if(db){try{const tx=db.transaction('meta','readwrite');list.forEach(f=>tx.objectStore('meta').put(metaOf(f)));await dbTx(tx);}catch(e){}}
   renderStats();
 }
@@ -921,7 +1021,7 @@ async function askAccept(fs){
 // ---- auto-save: photos & videos -> gallery, documents -> files ----
 function isIOS(){return /iPhone|iPad|iPod/.test(navigator.userAgent);}
 const typeFolder=(base,type)=>isMedia({base,type})?'Photos & Videos':'Documents';
-var autoMsg='',pendingDir=null,autoPend=[],autoTimer=null;
+var autoMsg='',pendingDir=null;
 function autoMode(){if(!$('#autoSave').checked)return'off';if(saveDir)return'folder';return isIOS()?'prompt':'download';}
 async function kvPut(k,v){if(!db)return;try{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(v,k);await dbTx(tx);}catch(e){}}
 async function kvGet(k){if(!db)return null;try{return await dbReq(db.transaction('kv').objectStore('kv').get(k));}catch(e){return null;}}
@@ -962,24 +1062,23 @@ function quickSave(list,kind){
   $('#shOpts').textContent='';sheetMsg('');$('#shFb').hidden=true;$('#sheet').hidden=false;
   runSave(()=>kind==='media'?saveToGallery(list):saveToFolder(list,'documents'));
 }
+var dlChain=Promise.resolve(),autoCount=0,autoMed=0;
 function autoQueue(it,m){
   const mode=autoMode();
   if(mode==='off')return;
-  if(mode==='folder'||mode==='prompt'){renderAuto();return;}   // folder: already written as it arrived · prompt: one-tap buttons
-  autoPend.push(it);clearTimeout(autoTimer);
-  if(m&&m.n&&m.i===m.n)autoFlush();else autoTimer=setTimeout(autoFlush,4000);
+  if(m&&m.i===1){autoCount=0;autoMed=0;}
+  if(mode==='folder'||mode==='prompt'){renderAuto();return;}   // folder: written to your folder while it arrived · iPhone: one-tap buttons update after every file
+  dlChain=dlChain.then(()=>autoSaveOne(it)).catch(()=>{});      // Android / desktop: save each file right after it arrives, while the rest keep coming
 }
-async function autoFlush(){
-  clearTimeout(autoTimer);
-  const list=autoPend.filter(f=>f.blob&&!f.done);autoPend=[];if(!list.length)return;
-  let n=0;
-  for(const f of list){try{saveBlobUrl(f.url||URL.createObjectURL(f.blob),f.base);n++;}catch(e){}await sleep(450);}
-  await markMany(list);
-  const med=list.filter(isMedia).length;
-  autoMsg='✓ Auto-saved '+n+' file'+(n>1?'s':'')+' to your Downloads'+(med&&/Android/.test(navigator.userAgent)?' — photos & videos also show in your Gallery.':'.');
-  renderAuto();
+async function autoSaveOne(it){
+  if(!it.blob||it.done)return;
+  saveBlobUrl(it.url||URL.createObjectURL(it.blob),it.base);
+  await markMany([it]);autoCount++;if(isMedia(it))autoMed++;
+  autoMsg='✓ Auto-saved '+autoCount+' file'+(autoCount>1?'s':'')+' so far to your Downloads'+(autoMed&&/Android/.test(navigator.userAgent)?' — photos & videos also show in your Gallery.':'.');
+  renderAuto();await sleep(300);
 }
 $('#autoSave').checked=LS.get('dt-autosave','1')==='1';
+$('#freeApp').checked=LS.get('dt-free','1')==='1';$('#freeApp').onchange=e=>LS.set('dt-free',e.target.checked?'1':'0');
 $('#autoSave').onchange=e=>{LS.set('dt-autosave',e.target.checked?'1':'0');updateAutoHelp();renderAuto();};
 $('#autoDir').onclick=async()=>{try{const h=await showDirectoryPicker({mode:'readwrite'});saveDir=h;pendingDir=null;await kvPut('saveDir',h);updateAutoHelp();renderStats();}catch(e){}};
 $('#autoDirClear').onclick=async()=>{saveDir=null;pendingDir=null;await kvDel('saveDir');updateAutoHelp();renderStats();};
@@ -1004,7 +1103,7 @@ function dropped(){
 function onDcClose(ch){
   if(ch!==dc)return;
   $('#prompt').hidden=true;for(const k in pending){pending[k](null);delete pending[k];}
-  if(rx){const r=rx;rx=null;r.row.firstChild.textContent=r.label+' — interrupted';if(r.disk)r.q=r.q.then(()=>r.w&&r.w.abort()).catch(()=>{});}
+  if(rx){const r=rx;rx=null;r.row.firstChild.textContent=r.label+' — interrupted';if(r.disk)r.q=r.q.then(()=>r.w&&r.w.abort()).catch(()=>{});else if(r.opfs){opJobs.delete(r.wid);opfsCall({op:'abort',id:r.wid}).catch(()=>{});}}
   status('disconnected');dropped();
 }
 function resume(){
@@ -1048,7 +1147,7 @@ function restoreSess(){
   return false;
 }
 renderDevs();
-(async()=>{try{db=await dbOpen();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}await loadSaved();await loadSaveDir();}catch(e){}})();
+(async()=>{try{db=await dbOpen();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}await probeOpfs();await loadSaved();await loadSaveDir();await cleanOrphans();freeSweep();}catch(e){}})();
 startListening();
 if(!restoreSess())view('home');
 </script>
